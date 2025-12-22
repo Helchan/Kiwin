@@ -15,6 +15,7 @@ import com.intellij.psi.PsiJavaFile
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiMethodCallExpression
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.psi.xml.XmlAttributeValue
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
 
@@ -47,8 +48,16 @@ class AssembleSqlAction : AnAction() {
         when (psiFile) {
             is XmlFile -> {
                 e.presentation.isVisible = true
-                // 检查是否在 Statement 标签内
                 val element = psiFile.findElementAt(editor.caretModel.offset)
+                
+                // 优先检查是否在 SQL 片段 ID 上（<sql> 的 id 或 <include> 的 refid）
+                val sqlFragmentId = findSqlFragmentIdAtCursor(element)
+                if (sqlFragmentId != null) {
+                    e.presentation.isEnabled = true
+                    return
+                }
+                
+                // 检查是否在 Statement 标签内
                 val statementTag = findStatementTag(element)
                 e.presentation.isEnabled = statementTag != null
             }
@@ -102,8 +111,23 @@ class AssembleSqlAction : AnAction() {
      * 处理在 XML 文件中的操作
      */
     private fun handleXmlFileAction(project: Project, psiFile: XmlFile, editor: com.intellij.openapi.editor.Editor) {
-        // 查找光标所在的 Statement 标签
         val element = psiFile.findElementAt(editor.caretModel.offset)
+        val useCase = ExpandStatementUseCase(project)
+        
+        // 优先检查是否在 SQL 片段 ID 上（<sql> 的 id 或 <include> 的 refid）
+        val sqlFragmentId = findSqlFragmentIdAtCursor(element)
+        if (sqlFragmentId != null) {
+            logger.info("检测到光标在 SQL 片段 ID 上: $sqlFragmentId")
+            val result = useCase.executeFromSqlFragmentId(sqlFragmentId, psiFile)
+            if (result == null) {
+                NotificationService(project).showErrorNotification("未找到 SQL 片段: $sqlFragmentId")
+                return
+            }
+            outputResult(project, result)
+            return
+        }
+        
+        // 查找光标所在的 Statement 标签
         val statementTag = findStatementTag(element)
 
         if (statementTag == null) {
@@ -112,7 +136,6 @@ class AssembleSqlAction : AnAction() {
         }
 
         // 使用应用层服务展开 Statement
-        val useCase = ExpandStatementUseCase(project)
         val result = useCase.executeFromTag(statementTag, psiFile)
         
         if (result == null) {
@@ -265,5 +288,41 @@ class AssembleSqlAction : AnAction() {
         }
 
         return null
+    }
+    
+    /**
+     * 查找光标所在位置的 SQL 片段 ID
+     * 支持两种场景：
+     * 1. 光标在 <sql id="xxx"> 的 id 属性值上
+     * 2. 光标在 <include refid="xxx"/> 的 refid 属性值上
+     * 
+     * @return SQL 片段 ID，如果光标不在相关位置则返回 null
+     */
+    private fun findSqlFragmentIdAtCursor(element: PsiElement?): String? {
+        if (element == null) return null
+        
+        // 检查是否在 XML 属性值内
+        val attrValue = PsiTreeUtil.getParentOfType(element, XmlAttributeValue::class.java)
+            ?: return null
+        
+        // 获取属性
+        val attr = attrValue.parent as? com.intellij.psi.xml.XmlAttribute
+            ?: return null
+        
+        // 获取所属标签
+        val tag = attr.parent as? XmlTag
+            ?: return null
+        
+        return when {
+            // 场景1：<sql id="xxx"> 的 id 属性
+            tag.name == "sql" && attr.name == "id" -> {
+                attrValue.value
+            }
+            // 场景2：<include refid="xxx"/> 的 refid 属性
+            tag.name == "include" && attr.name == "refid" -> {
+                attrValue.value
+            }
+            else -> null
+        }
     }
 }

@@ -2,9 +2,12 @@ package com.euver.kiwi.action
 
 import com.euver.kiwi.domain.model.MethodInfo
 import com.euver.kiwi.domain.service.MethodInfoExtractorService
+import com.euver.kiwi.domain.service.SqlFragmentUsageFinderService
 import com.euver.kiwi.domain.service.TopCallerFinderService
+import com.euver.kiwi.parser.MyBatisXmlParser
 import com.euver.kiwi.service.ConsoleOutputService
 import com.euver.kiwi.service.NotificationService
+import com.euver.kiwi.service.TopCallersTableDialog
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -25,6 +28,7 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
+import com.intellij.psi.xml.XmlAttributeValue
 
 /**
  * 查找顶层调用者 Action
@@ -56,8 +60,11 @@ class FindTopCallerAction : AnAction() {
             is XmlFile -> {
                 e.presentation.isVisible = true
                 val element = psiFile.findElementAt(editor.caretModel.offset)
+                // 支持 Statement 标签、SQL 片段标签和 include 标签的 refid
                 val statementTag = findStatementTag(element)
-                e.presentation.isEnabled = statementTag != null
+                val sqlFragmentTag = findSqlFragmentTag(element)
+                val includeRefId = findIncludeRefId(element)
+                e.presentation.isEnabled = statementTag != null || sqlFragmentTag != null || includeRefId != null
             }
             is PsiJavaFile -> {
                 e.presentation.isVisible = true
@@ -154,6 +161,7 @@ class FindTopCallerAction : AnAction() {
 
     /**
      * 处理 XML 文件中的操作
+     * 支持 Statement 标签、SQL 片段标签和 include 标签的 refid
      */
     private fun handleXmlFileAction(
         project: Project,
@@ -161,13 +169,49 @@ class FindTopCallerAction : AnAction() {
         editor: com.intellij.openapi.editor.Editor
     ) {
         val element = psiFile.findElementAt(editor.caretModel.offset)
+        
+        // 优先检查是否在 include 标签的 refid 上
+        val includeRefId = findIncludeRefId(element)
+        if (includeRefId != null) {
+            handleSqlFragmentTopCallers(project, psiFile, includeRefId)
+            return
+        }
+        
+        // 检查是否在 SQL 片段标签上
+        val sqlFragmentTag = findSqlFragmentTag(element)
+        if (sqlFragmentTag != null) {
+            val parser = MyBatisXmlParser()
+            val namespace = parser.extractNamespace(psiFile)
+            val fragmentId = sqlFragmentTag.getAttributeValue("id")
+            
+            if (namespace == null || fragmentId == null) {
+                NotificationService(project).showErrorNotification("无法获取 SQL 片段的 namespace 或 id")
+                return
+            }
+            
+            val fragmentFullId = "$namespace.$fragmentId"
+            handleSqlFragmentTopCallers(project, psiFile, fragmentFullId)
+            return
+        }
+        
+        // 检查是否在 Statement 标签上
         val statementTag = findStatementTag(element)
-
-        if (statementTag == null) {
-            NotificationService(project).showErrorNotification("未找到对应的 MyBatis Statement 定义")
+        if (statementTag != null) {
+            handleStatementTopCallers(project, psiFile, statementTag)
             return
         }
 
+        NotificationService(project).showErrorNotification("未找到对应的 MyBatis Statement 或 SQL 片段定义")
+    }
+
+    /**
+     * 处理 Statement 标签的顶层调用者查找
+     */
+    private fun handleStatementTopCallers(
+        project: Project,
+        psiFile: XmlFile,
+        statementTag: XmlTag
+    ) {
         val namespace = findMapperNamespace(statementTag)
         val statementId = statementTag.getAttributeValue("id")
 
@@ -183,6 +227,103 @@ class FindTopCallerAction : AnAction() {
         }
 
         findAndOutputTopCallers(project, mapperMethod)
+    }
+
+    /**
+     * 处理 SQL 片段的顶层调用者查找
+     * 向上追溯找到所有引用该片段的 Statement，再查找这些 Statement 的顶层调用者
+     */
+    private fun handleSqlFragmentTopCallers(
+        project: Project,
+        psiFile: XmlFile,
+        fragmentFullId: String
+    ) {
+        logger.info("开始查找 SQL 片段的顶层调用者: $fragmentFullId")
+        
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "查找 SQL 片段的顶层调用者...", true) {
+            override fun run(indicator: ProgressIndicator) {
+                indicator.isIndeterminate = false
+                indicator.text = "正在查找引用该 SQL 片段的 Statement..."
+                indicator.fraction = 0.0
+                
+                // 第一步：找到所有引用该 SQL 片段的 Mapper 方法
+                val fragmentUsageService = SqlFragmentUsageFinderService(project)
+                val mapperMethods = fragmentUsageService.findMapperMethodsUsingFragment(fragmentFullId, psiFile)
+                
+                if (mapperMethods.isEmpty()) {
+                    ApplicationManager.getApplication().invokeLater {
+                        NotificationService(project).showInfoNotification(
+                            "未找到引用该 SQL 片段的 Statement: $fragmentFullId"
+                        )
+                    }
+                    return
+                }
+                
+                indicator.text = "正在分析调用链..."
+                indicator.fraction = 0.3
+                
+                // 第二步：对每个 Mapper 方法查找其顶层调用者
+                val topCallerService = TopCallerFinderService(project)
+                val allTopCallers = mutableSetOf<PsiMethod>()
+                var processedCount = 0
+                
+                for (mapperMethod in mapperMethods) {
+                    val topCallers = topCallerService.findTopCallers(mapperMethod)
+                    if (topCallers.isEmpty()) {
+                        // 如果没有顶层调用者，Mapper 方法本身就是顶层调用者
+                        allTopCallers.add(mapperMethod)
+                    } else {
+                        allTopCallers.addAll(topCallers)
+                    }
+                    processedCount++
+                    indicator.fraction = 0.3 + 0.7 * processedCount / mapperMethods.size
+                }
+                
+                ApplicationManager.getApplication().invokeLater {
+                    outputSqlFragmentTopCallers(project, fragmentFullId, allTopCallers)
+                }
+            }
+        })
+    }
+
+    /**
+     * 输出 SQL 片段的顶层调用者信息
+     */
+    private fun outputSqlFragmentTopCallers(
+        project: Project,
+        fragmentFullId: String,
+        topCallers: Set<PsiMethod>
+    ) {
+        val consoleOutputService = ConsoleOutputService(project)
+        val methodInfoExtractorService = MethodInfoExtractorService()
+
+        if (topCallers.isEmpty()) {
+            consoleOutputService.outputTopCallersInfo("SQL Fragment: $fragmentFullId", emptyList())
+            NotificationService(project).showInfoNotification("未找到顶层调用者")
+            return
+        }
+
+        val methodInfoList = topCallers.mapNotNull { caller ->
+            try {
+                ApplicationManager.getApplication().runReadAction<MethodInfo> {
+                    methodInfoExtractorService.extractMethodInfo(caller)
+                }
+            } catch (e: Exception) {
+                logger.warn("提取方法信息失败: ${caller.name}", e)
+                null
+            }
+        }
+
+        consoleOutputService.outputTopCallersInfo("SQL Fragment: $fragmentFullId", methodInfoList)
+        NotificationService(project).showInfoNotification("找到 ${topCallers.size} 个顶层调用者")
+
+        if (methodInfoList.isNotEmpty()) {
+            TopCallersTableDialog(
+                project = project,
+                sourceMethodName = "SQL Fragment: $fragmentFullId",
+                topCallers = methodInfoList
+            ).show()
+        }
     }
 
     /**
@@ -234,6 +375,14 @@ class FindTopCallerAction : AnAction() {
 
         consoleOutputService.outputTopCallersInfo(sourceMethodName, methodInfoList)
         NotificationService(project).showInfoNotification("找到 ${topCallers.size} 个顶层调用者")
+
+        if (methodInfoList.isNotEmpty()) {
+            TopCallersTableDialog(
+                project = project,
+                sourceMethodName = sourceMethodName,
+                topCallers = methodInfoList
+            ).show()
+        }
     }
 
     /**
@@ -261,9 +410,106 @@ class FindTopCallerAction : AnAction() {
             if (tagName in setOf("select", "insert", "update", "delete")) {
                 return currentTag
             }
+            // 如果已经到达 sql 标签，不继续向上查找 Statement
+            if (tagName == "sql") {
+                return null
+            }
             currentTag = PsiTreeUtil.getParentOfType(currentTag, XmlTag::class.java)
         }
 
+        return null
+    }
+
+    /**
+     * 查找包含当前元素的 SQL 片段标签（sql）
+     */
+    private fun findSqlFragmentTag(element: PsiElement?): XmlTag? {
+        if (element == null) return null
+
+        var currentTag = PsiTreeUtil.getParentOfType(element, XmlTag::class.java)
+
+        while (currentTag != null) {
+            if (currentTag.name == "sql") {
+                return currentTag
+            }
+            // 如果已经到达 Statement 标签，不继续向上查找
+            if (currentTag.name in setOf("select", "insert", "update", "delete")) {
+                return null
+            }
+            currentTag = PsiTreeUtil.getParentOfType(currentTag, XmlTag::class.java)
+        }
+
+        return null
+    }
+
+    /**
+     * 查找 include 标签的 refid 并返回完整的片段 ID
+     * 当光标在 include 标签或其 refid 属性值上时触发
+     */
+    private fun findIncludeRefId(element: PsiElement?): String? {
+        if (element == null) return null
+
+        // 检查是否在 XmlAttributeValue 上（refid 的值）
+        val attributeValue = PsiTreeUtil.getParentOfType(element, XmlAttributeValue::class.java, false)
+        if (attributeValue != null) {
+            val attribute = attributeValue.parent
+            if (attribute is com.intellij.psi.xml.XmlAttribute && attribute.name == "refid") {
+                val includeTag = attribute.parent as? XmlTag
+                if (includeTag?.name == "include") {
+                    return resolveRefIdToFullId(attributeValue.value, includeTag)
+                }
+            }
+        }
+
+        // 检查是否在 include 标签上
+        var currentTag = PsiTreeUtil.getParentOfType(element, XmlTag::class.java)
+        while (currentTag != null) {
+            if (currentTag.name == "include") {
+                val refid = currentTag.getAttributeValue("refid")
+                if (refid != null) {
+                    return resolveRefIdToFullId(refid, currentTag)
+                }
+            }
+            // 如果到达了 Statement 或 sql 标签，停止查找
+            if (currentTag.name in setOf("select", "insert", "update", "delete", "sql")) {
+                break
+            }
+            currentTag = PsiTreeUtil.getParentOfType(currentTag, XmlTag::class.java)
+        }
+
+        return null
+    }
+
+    /**
+     * 将 refid 解析为完整的片段 ID（namespace.fragmentId）
+     */
+    private fun resolveRefIdToFullId(refid: String, includeTag: XmlTag): String? {
+        val dotIndex = refid.lastIndexOf('.')
+        return if (dotIndex > 0) {
+            // 已经是完整格式
+            refid
+        } else {
+            // 需要获取当前文件的 namespace
+            val namespace = findMapperNamespaceFromTag(includeTag)
+            if (namespace != null) {
+                "$namespace.$refid"
+            } else {
+                null
+            }
+        }
+    }
+
+    /**
+     * 从任意标签向上查找 Mapper 的 namespace
+     */
+    private fun findMapperNamespaceFromTag(tag: XmlTag): String? {
+        var parent: Any? = tag.parent
+        while (parent is XmlTag) {
+            if (parent.name == "mapper") {
+                return parent.getAttributeValue("namespace")
+            }
+            parent = parent.parent
+        }
         return null
     }
 

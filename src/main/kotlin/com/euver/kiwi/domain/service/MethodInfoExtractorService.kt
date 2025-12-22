@@ -65,6 +65,9 @@ class MethodInfoExtractorService {
      * 提取方法的基础信息
      */
     fun extractMethodInfo(method: PsiMethod): MethodInfo {
+        val packageName = extractPackageName(method)
+        val simpleClassName = extractSimpleClassName(method)
+        val methodSignature = extractMethodSignature(method)
         val qualifiedName = extractQualifiedName(method)
         val functionComment = extractFunctionComment(method)
         val classComment = extractClassComment(method)
@@ -73,12 +76,48 @@ class MethodInfoExtractorService {
         logger.info("提取方法信息: qualifiedName=$qualifiedName, httpMethod=$httpMethod")
 
         return MethodInfo(
+            packageName = packageName,
+            simpleClassName = simpleClassName,
+            methodSignature = methodSignature,
             httpMethod = httpMethod,
             requestPath = requestPath,
             qualifiedName = qualifiedName,
             classComment = classComment,
             functionComment = functionComment
         )
+    }
+
+    /**
+     * 提取方法所在的包路径
+     */
+    private fun extractPackageName(method: PsiMethod): String {
+        val containingClass = method.containingClass ?: return ""
+        val qualifiedName = containingClass.qualifiedName ?: return ""
+        val lastDotIndex = qualifiedName.lastIndexOf('.')
+        return if (lastDotIndex > 0) {
+            qualifiedName.substring(0, lastDotIndex)
+        } else {
+            ""
+        }
+    }
+
+    /**
+     * 提取简单类名（不带包路径）
+     */
+    private fun extractSimpleClassName(method: PsiMethod): String {
+        return method.containingClass?.name ?: "UnknownClass"
+    }
+
+    /**
+     * 提取方法签名（方法名 + 参数类型列表）
+     * 格式: methodName(ParamType1, ParamType2)
+     */
+    private fun extractMethodSignature(method: PsiMethod): String {
+        val methodName = method.name
+        val params = method.parameterList.parameters.joinToString(", ") {
+            it.type.presentableText
+        }
+        return "$methodName($params)"
     }
 
     /**

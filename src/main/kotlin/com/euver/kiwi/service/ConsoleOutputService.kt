@@ -26,6 +26,9 @@ class ConsoleOutputService(private val project: Project) {
 
     companion object {
         private const val TOOL_WINDOW_ID = "Kiwi Console"
+        
+        // 缓存各标签页的 ConsoleView，用于追加内容
+        private val consoleViewCache = mutableMapOf<String, ConsoleView>()
     }
 
     /**
@@ -64,6 +67,13 @@ class ConsoleOutputService(private val project: Project) {
         val output = buildTopCallersOutput(sourceMethodName, topCallers)
         showInToolWindow(output, ConsoleViewContentType.NORMAL_OUTPUT, "Top Callers")
     }
+    
+    /**
+     * 输出通用信息到控制台工具窗口（追加模式）
+     */
+    fun output(message: String, tabTitle: String = "Top Callers") {
+        appendToToolWindow(message + "\n", ConsoleViewContentType.NORMAL_OUTPUT, tabTitle)
+    }
 
     /**
      * 复制到系统剪贴板
@@ -80,7 +90,7 @@ class ConsoleOutputService(private val project: Project) {
     }
 
     /**
-     * 在工具窗口中显示输出内容
+     * 在工具窗口中显示输出内容（替换模式）
      */
     private fun showInToolWindow(output: String, contentType: ConsoleViewContentType, tabTitle: String = "Statement Result") {
         logger.info("准备显示控制台输出窗口...")
@@ -101,13 +111,56 @@ class ConsoleOutputService(private val project: Project) {
             val content = contentFactory.createContent(consoleView.component, tabTitle, false)
 
             toolWindow.contentManager.removeAllContents(true)
+            // 清空缓存
+            consoleViewCache.clear()
             toolWindow.contentManager.addContent(content)
+            // 缓存新的 ConsoleView
+            consoleViewCache[tabTitle] = consoleView
 
             consoleView.print(output, contentType)
 
             toolWindow.show {
                 logger.info("控制台窗口已显示")
             }
+        }
+    }
+    
+    /**
+     * 追加内容到工具窗口（不清空现有内容）
+     */
+    private fun appendToToolWindow(output: String, contentType: ConsoleViewContentType, tabTitle: String = "Top Callers") {
+        logger.info("准备追加控制台输出内容...")
+        
+        ApplicationManager.getApplication().invokeLater {
+            val toolWindowManager = ToolWindowManager.getInstance(project)
+            val toolWindow = toolWindowManager.getToolWindow(TOOL_WINDOW_ID)
+            
+            if (toolWindow == null) {
+                logger.warn("未找到工具窗口: $TOOL_WINDOW_ID，请检查 plugin.xml 配置")
+                return@invokeLater
+            }
+            
+            // 尝试从缓存获取现有的 ConsoleView
+            val cachedConsoleView = consoleViewCache[tabTitle]
+            if (cachedConsoleView != null) {
+                // 直接追加到现有的 ConsoleView
+                cachedConsoleView.print(output, contentType)
+                toolWindow.show()
+                return@invokeLater
+            }
+            
+            // 如果没有缓存，创建新的 ConsoleView
+            val consoleView = createConsoleView()
+            val contentFactory = ContentFactory.getInstance()
+            val content = contentFactory.createContent(consoleView.component, tabTitle, false)
+            
+            toolWindow.contentManager.removeAllContents(true)
+            consoleViewCache.clear()
+            toolWindow.contentManager.addContent(content)
+            consoleViewCache[tabTitle] = consoleView
+            
+            consoleView.print(output, contentType)
+            toolWindow.show()
         }
     }
 
@@ -201,13 +254,21 @@ class ConsoleOutputService(private val project: Project) {
 
     /**
      * 构建顶层调用者输出内容
+     * 输出顺序：
+     * 1. 包路径（必填）
+     * 2. 类名.方法签名（必填）
+     * 3. 类的功能注释（可选，存在时才显示）
+     * 4. 方法的功能注释（可选，存在时才显示）
+     * 5. 方法类型：普通方法 或 供外部调用的接口（必填）
+     * 6. 请求类型（仅接口时显示）
+     * 7. 请求路径（仅接口时显示）
      */
     private fun buildTopCallersOutput(sourceMethodName: String, topCallers: List<MethodInfo>): String {
         val builder = StringBuilder()
 
         builder.appendLine("========== 顶层调用者分析结果 ==========")
         builder.appendLine("时间: ${dateFormat.format(Date())}")
-        builder.appendLine("源方法: $sourceMethodName")
+        builder.appendLine("源位置: $sourceMethodName")
         builder.appendLine("------------------------------------------")
 
         if (topCallers.isEmpty()) {
@@ -217,11 +278,30 @@ class ConsoleOutputService(private val project: Project) {
             builder.appendLine()
 
             topCallers.forEachIndexed { index, methodInfo ->
-                builder.appendLine("【${index + 1}】${methodInfo.qualifiedName}")
-                builder.appendLine("    请求类型: ${methodInfo.httpMethod.ifEmpty { "(无)" }}")
-                builder.appendLine("    请求路径: ${methodInfo.requestPath.ifEmpty { "(无)" }}")
-                builder.appendLine("    类功能注释: ${methodInfo.classComment.ifEmpty { "(无)" }}")
-                builder.appendLine("    方法功能注释: ${methodInfo.functionComment.ifEmpty { "(无)" }}")
+                builder.appendLine("【${index + 1}】")
+                // 1. 包路径（必填）
+                builder.appendLine("    包路径: ${methodInfo.packageName.ifEmpty { "(未知)" }}")
+                // 2. 类名.方法签名（必填）
+                builder.appendLine("    方法: ${methodInfo.simpleClassName}.${methodInfo.methodSignature}")
+                // 3. 类的功能注释（可选）
+                if (methodInfo.classComment.isNotEmpty()) {
+                    builder.appendLine("    类功能注释: ${methodInfo.classComment}")
+                }
+                // 4. 方法的功能注释（可选）
+                if (methodInfo.functionComment.isNotEmpty()) {
+                    builder.appendLine("    方法功能注释: ${methodInfo.functionComment}")
+                }
+                // 5. 方法类型（必填）
+                val methodType = if (methodInfo.isExternalInterface()) "供外部调用的接口" else "普通方法"
+                builder.appendLine("    方法类型: $methodType")
+                // 6. 请求类型（仅接口时显示）
+                if (methodInfo.isExternalInterface() && methodInfo.httpMethod.isNotEmpty()) {
+                    builder.appendLine("    请求类型: ${methodInfo.httpMethod}")
+                }
+                // 7. 请求路径（仅接口时显示）
+                if (methodInfo.isExternalInterface() && methodInfo.requestPath.isNotEmpty()) {
+                    builder.appendLine("    请求路径: ${methodInfo.requestPath}")
+                }
                 builder.appendLine()
             }
         }

@@ -43,7 +43,7 @@ class TopCallerFinderService(private val project: Project) {
         // 排除起始方法本身：如果起始方法没有调用者，不应该将它返回为顶层调用者
         val filteredCallers = topCallers.filter { getMethodKey(it) != sourceMethodKey }.toSet()
         
-        logger.info("找到 ${filteredCallers.size} 个顶层调用者")
+        logger.info("找到 ${filteredCallers.size} 个顶层调用者，共访问了 ${visited.size} 个不同方法")
         return filteredCallers
     }
 
@@ -64,6 +64,7 @@ class TopCallerFinderService(private val project: Project) {
 
         val methodKey = getMethodKey(method)
         if (methodKey in visited) {
+            logger.debug("方法已访问，跳过: $methodKey")
             return
         }
         visited.add(methodKey)
@@ -75,6 +76,7 @@ class TopCallerFinderService(private val project: Project) {
             topCallers.add(method)
             logger.debug("找到顶层调用者: $methodKey")
         } else {
+            logger.debug("方法 $methodKey 有 ${callers.size} 个调用者，继续向上追溯")
             for (caller in callers) {
                 findTopCallersRecursively(caller, topCallers, visited, depth + 1)
             }
@@ -181,13 +183,18 @@ class TopCallerFinderService(private val project: Project) {
 
     /**
      * 生成方法的唯一标识键
+     * 包含返回类型和参数类型签名以确保唯一性，避免重载方法被错误去重
      */
     private fun getMethodKey(method: PsiMethod): String {
         return ApplicationManager.getApplication().runReadAction<String> {
             val className = method.containingClass?.qualifiedName ?: "UnknownClass"
             val methodName = method.name
-            val params = method.parameterList.parameters.joinToString(",") { it.type.canonicalText }
-            "$className.$methodName($params)"
+            val returnType = method.returnType?.canonicalText ?: "void"
+            val params = method.parameterList.parameters.joinToString(",") { 
+                // 使用 presentableText 保留泛型信息，避免类型擦除导致的冲突
+                it.type.presentableText 
+            }
+            "$returnType $className.$methodName($params)"
         }
     }
 }

@@ -5,6 +5,7 @@ import com.euver.kiwi.domain.service.StatementExpanderService
 import com.euver.kiwi.infrastructure.resolver.SqlFragmentResolverImpl
 import com.euver.kiwi.model.AssemblyResult
 import com.euver.kiwi.model.StatementInfo
+import com.euver.kiwi.model.StatementType
 import com.euver.kiwi.parser.MyBatisXmlParser
 import com.euver.kiwi.service.MapperIndexService
 import com.intellij.openapi.diagnostic.thisLogger
@@ -76,6 +77,45 @@ class ExpandStatementUseCase(private val project: Project) {
         }
         
         return execute(statementInfo)
+    }
+    
+    /**
+     * 从 SQL 片段 ID 展开片段内容
+     * 支持光标在 <sql> 的 id 或 <include> 的 refid 上触发
+     * 
+     * @param fragmentRefId 片段 ID（可能包含 namespace 前缀）
+     * @param currentFile 当前 XML 文件
+     * @return 组装结果，如果找不到片段则返回 null
+     */
+    fun executeFromSqlFragmentId(fragmentRefId: String, currentFile: XmlFile): AssemblyResult? {
+        val currentNamespace = parser.extractNamespace(currentFile)
+        if (currentNamespace == null) {
+            logger.warn("无法从当前文件提取 namespace")
+            return null
+        }
+        
+        // 解析 refid，可能包含 namespace 前缀
+        val (targetNamespace, fragmentId) = fragmentResolver.parseRefId(fragmentRefId, currentNamespace)
+        
+        // 查找 SQL 片段
+        val fragment = fragmentResolver.findSqlFragment(targetNamespace, fragmentId, currentFile)
+        if (fragment == null) {
+            logger.warn("未找到 SQL 片段: $fragmentRefId (namespace: $targetNamespace)")
+            return null
+        }
+        
+        logger.info("执行 SQL 片段展开用例: ${fragment.namespace}.${fragment.fragmentId}")
+        
+        // 将 SQL 片段转换为 StatementInfo 进行展开
+        val statementInfo = StatementInfo(
+            statementId = fragment.fragmentId,
+            statementType = StatementType.SELECT,  // SQL 片段没有类型，使用默认值
+            namespace = fragment.namespace,
+            content = fragment.content,
+            sourceFile = fragment.sourceFile
+        )
+        
+        return expanderService.expand(statementInfo)
     }
     
     /**
