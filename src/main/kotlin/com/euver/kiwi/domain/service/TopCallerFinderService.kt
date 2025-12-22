@@ -6,14 +6,23 @@ import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiMethod
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.roots.TestSourcesFilter
+import com.intellij.psi.PsiLambdaExpression
+import com.intellij.psi.PsiMethodReferenceExpression
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.MethodReferencesSearch
 import com.intellij.psi.search.searches.OverridingMethodsSearch
+import com.intellij.psi.search.searches.FunctionalExpressionSearch
 import com.intellij.psi.util.PsiTreeUtil
 
 /**
  * 顶层调用者查找服务
  * 负责从指定方法开始，向上追溯调用链，找到所有顶层调用者（入口方法）
+ * 
+ * 支持的调用链场景：
+ * - 直接方法调用
+ * - 接口/父类方法调用
+ * - Lambda表达式调用（追踪到Lambda声明位置）
+ * - 方法引用调用（Class::method，追踪到引用声明位置）
  */
 class TopCallerFinderService(private val project: Project) {
 
@@ -21,6 +30,35 @@ class TopCallerFinderService(private val project: Project) {
 
     companion object {
         private const val MAX_DEPTH = 50
+        
+        /**
+         * 需要过滤的JDK函数式接口方法
+         * 这些方法是函数式接口的抽象方法，不应被视为有意义的顶层调用者
+         */
+        private val FUNCTIONAL_INTERFACE_METHODS = setOf(
+            // java.util.function
+            "java.util.function.Consumer.accept",
+            "java.util.function.BiConsumer.accept",
+            "java.util.function.Function.apply",
+            "java.util.function.BiFunction.apply",
+            "java.util.function.Supplier.get",
+            "java.util.function.Predicate.test",
+            "java.util.function.BiPredicate.test",
+            "java.util.function.UnaryOperator.apply",
+            "java.util.function.BinaryOperator.apply",
+            // java.lang
+            "java.lang.Runnable.run",
+            "java.util.concurrent.Callable.call",
+            // Java Streams
+            "java.util.stream.Stream.forEach",
+            "java.util.stream.Stream.map",
+            "java.util.stream.Stream.filter",
+            "java.util.stream.Stream.flatMap",
+            // 常见框架回调接口
+            "org.springframework.transaction.support.TransactionCallback.doInTransaction",
+            "org.springframework.jdbc.core.RowMapper.mapRow",
+            "org.springframework.jdbc.core.ResultSetExtractor.extractData"
+        )
     }
 
     /**
@@ -69,18 +107,95 @@ class TopCallerFinderService(private val project: Project) {
         }
         visited.add(methodKey)
 
+        // 检查是否是函数式接口方法，如果是则需要特殊处理
+        if (isFunctionalInterfaceMethod(method)) {
+            logger.info("检测到函数式接口方法: $methodKey，尝试通过Lambda/方法引用追溯实际调用者")
+            // 对于函数式接口方法，尝试查找Lambda和方法引用的声明位置
+            val lambdaCallers = findLambdaDeclarationCallers(method)
+            if (lambdaCallers.isNotEmpty()) {
+                logger.info("找到 ${lambdaCallers.size} 个通过Lambda/方法引用的调用者")
+                for (caller in lambdaCallers) {
+                    findTopCallersRecursively(caller, topCallers, visited, depth + 1)
+                }
+                return
+            }
+            // 如果找不到Lambda调用者，不将函数式接口方法作为顶层调用者，继续常规搜索
+            logger.info("未找到Lambda/方法引用的调用者，尝试常规调用链追溯")
+        }
+
         // 查找该方法及其所实现/重写的接口或父类方法的所有调用者
         val callers = findAllCallers(method)
 
         if (callers.isEmpty()) {
-            topCallers.add(method)
-            logger.debug("找到顶层调用者: $methodKey")
+            // 如果是函数式接口方法，不将其作为顶层调用者
+            if (!isFunctionalInterfaceMethod(method)) {
+                topCallers.add(method)
+                logger.debug("找到顶层调用者: $methodKey")
+            } else {
+                logger.debug("跳过函数式接口方法作为顶层调用者: $methodKey")
+            }
         } else {
             logger.debug("方法 $methodKey 有 ${callers.size} 个调用者，继续向上追溯")
             for (caller in callers) {
                 findTopCallersRecursively(caller, topCallers, visited, depth + 1)
             }
         }
+    }
+
+    /**
+     * 判断方法是否是函数式接口方法
+     */
+    private fun isFunctionalInterfaceMethod(method: PsiMethod): Boolean {
+        return ApplicationManager.getApplication().runReadAction<Boolean> {
+            val className = method.containingClass?.qualifiedName ?: return@runReadAction false
+            val methodName = method.name
+            val fullName = "$className.$methodName"
+            fullName in FUNCTIONAL_INTERFACE_METHODS
+        }
+    }
+
+    /**
+     * 查找Lambda表达式和方法引用的声明位置所在的方法
+     * 用于追溯函数式接口调用的实际调用者
+     */
+    private fun findLambdaDeclarationCallers(method: PsiMethod): List<PsiMethod> {
+        val callers = mutableListOf<PsiMethod>()
+        val scope = createProductionScope()
+        
+        ApplicationManager.getApplication().runReadAction {
+            // 获取方法所在的接口/类
+            val containingClass = method.containingClass ?: return@runReadAction
+            
+            // 查找所有实现该函数式接口的Lambda表达式和方法引用
+            try {
+                val functionalExpressions = FunctionalExpressionSearch.search(containingClass, scope).findAll()
+                
+                for (expression in functionalExpressions) {
+                    when (expression) {
+                        is PsiLambdaExpression -> {
+                            // Lambda表达式：查找包含它的方法
+                            val enclosingMethod = PsiTreeUtil.getParentOfType(expression, PsiMethod::class.java)
+                            if (enclosingMethod != null && !isInTestSource(enclosingMethod)) {
+                                callers.add(enclosingMethod)
+                                logger.debug("Lambda表达式声明位置: ${getMethodKey(enclosingMethod)}")
+                            }
+                        }
+                        is PsiMethodReferenceExpression -> {
+                            // 方法引用：查找包含它的方法
+                            val enclosingMethod = PsiTreeUtil.getParentOfType(expression, PsiMethod::class.java)
+                            if (enclosingMethod != null && !isInTestSource(enclosingMethod)) {
+                                callers.add(enclosingMethod)
+                                logger.debug("方法引用声明位置: ${getMethodKey(enclosingMethod)}")
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                logger.warn("查找Lambda/方法引用时出错: ${e.message}")
+            }
+        }
+        
+        return callers.distinctBy { getMethodKey(it) }
     }
 
     /**

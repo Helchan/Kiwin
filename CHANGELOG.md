@@ -1,6 +1,16 @@
-# Changelog
+# Kiwi Changelog
 
-## [Unreleased]
+## [0.0.57]
+### Fixed
+- 修复TopCallerFinderService在遇到Lambda表达式/函数式接口时调用链中断的问题
+- 新增Lambda表达式声明位置追踪功能，支持追溯到Lambda声明所在的方法
+- 新增方法引用(Class::method)追踪功能
+- 新增JDK函数式接口方法过滤逻辑，过滤Consumer.accept、Function.apply等不应作为顶层调用者的接口方法
+- 支持Spring框架常见回调接口的识别（TransactionCallback、RowMapper等）
+
+## [0.0.56]
+### Previous
+- 初始版本功能
 
 ## [0.0.18]
 - 将插件ID从 com.euver.template 更改为 com.euver.kiwi
