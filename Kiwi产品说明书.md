@@ -205,12 +205,36 @@ public class UserController {
 
 该功能帮助开发者快速查找 Java 方法或 MyBatis Statement 的所有顶层调用者（入口方法），自动递归分析调用链，找到所有最终的入口点，并输出每个入口方法的详细信息。
 
+**核心能力：**
+- 从指定方法开始向上追溯调用链，找到所有顶层调用者（入口方法）
+- 智能识别没有被其他方法调用的方法作为顶层入口
+- 自动去重，避免同一个入口方法被重复统计
+
+#### 支持的调用链场景
+
+| 场景 | 说明 |
+|------|------|
+| 直接方法调用 | 标准的方法调用关系追溯 |
+| 接口/父类方法调用 | 当实现类重写接口方法时，自动追溯通过接口调用的调用者 |
+| Lambda 表达式调用 | 追踪到 Lambda 表达式的声明位置所在方法 |
+| 方法引用调用 | 追踪 `Class::method` 形式的方法引用到声明位置 |
+
+#### 技术特点
+
+| 特点 | 说明 |
+|------|------|
+| 递归深度限制 | 最大 50 层递归深度，防止超深调用链或循环引用导致的性能问题 |
+| 函数式接口方法过滤 | 智能过滤 JDK 函数式接口方法（如 Consumer.accept、Function.apply），追溯到实际调用位置 |
+| 生产代码范围搜索 | 自动排除测试代码目录，只搜索生产代码中的调用关系 |
+| 循环引用保护 | 使用已访问集合检测循环引用，避免无限递归 |
+
 #### 使用场景
 
-- 分析某个底层方法被哪些 API 入口调用
-- 理解代码的影响范围，评估修改的风险
-- 快速定位调用某个 MyBatis SQL 的所有 Controller 入口
-- 代码审查时追溯调用链路
+- **调用链分析**：分析某个底层方法被哪些 API 入口调用
+- **代码依赖关系梳理**：理解代码的影响范围，评估修改的风险
+- **函数式编程调用追溯**：追踪 Lambda 和方法引用的实际调用位置
+- **快速定位入口**：快速定位调用某个 MyBatis SQL 的所有 Controller 入口
+- **代码审查**：代码审查时追溯调用链路，理解代码上下文
 
 #### 触发方式
 
@@ -246,13 +270,30 @@ public class UserController {
 | 方法调用表达式上触发（分析被调用方法） | ✅ 支持 |
 | MyBatis XML Statement 上触发 | ✅ 支持 |
 | 递归调用链分析（最大深度 50 层） | ✅ 支持 |
-| 接口实现类方法调用追溯 | ✅ 支持 |
+| 直接方法调用追溯 | ✅ 支持 |
+| 接口/父类方法调用追溯 | ✅ 支持 |
+| Lambda 表达式调用追溯 | ✅ 支持 |
+| 方法引用调用追溯（Class::method） | ✅ 支持 |
+| 函数式接口方法智能过滤 | ✅ 支持 |
 | 循环引用检测和保护 | ✅ 支持 |
+| 测试代码自动排除 | ✅ 支持 |
 | 后台异步执行（不阻塞 IDE） | ✅ 支持 |
+
+#### 函数式接口方法过滤列表
+
+以下函数式接口方法会被智能过滤，自动追溯到实际调用位置：
+
+| 类别 | 方法 |
+|------|------|
+| java.util.function | Consumer.accept、BiConsumer.accept、Function.apply、BiFunction.apply、Supplier.get、Predicate.test、BiPredicate.test、UnaryOperator.apply、BinaryOperator.apply |
+| java.lang | Runnable.run |
+| java.util.concurrent | Callable.call |
+| Java Streams | Stream.forEach、Stream.map、Stream.filter、Stream.flatMap |
+| Spring 框架回调 | TransactionCallback.doInTransaction、RowMapper.mapRow、ResultSetExtractor.extractData |
 
 #### 使用示例
 
-**示例：从 Service 方法查找 Controller 入口**
+**示例 1：从 Service 方法查找 Controller 入口**
 
 假设有如下代码结构：
 
@@ -300,6 +341,35 @@ public class OrderServiceImpl implements OrderService {
 
 ==========================================
 ```
+
+**示例 2：Lambda 表达式调用追溯**
+
+```java
+@Service
+public class UserService {
+    public void processUsers(List<User> users) {
+        users.forEach(user -> userMapper.updateStatus(user.getId()));  // Lambda 调用
+    }
+}
+```
+
+在 `userMapper.updateStatus` 上分析时，会自动追溯到 `processUsers` 方法作为 Lambda 的声明位置，继续向上查找顶层调用者。
+
+**示例 3：方法引用调用追溯**
+
+```java
+@Service
+public class OrderService {
+    public List<OrderDTO> getOrders(List<Long> ids) {
+        return ids.stream()
+            .map(orderMapper::selectById)  // 方法引用
+            .map(this::convertToDTO)
+            .collect(Collectors.toList());
+    }
+}
+```
+
+在 `orderMapper.selectById` 上分析时，会识别方法引用 `orderMapper::selectById`，追溯到 `getOrders` 方法，继续向上查找顶层调用者。
 
 ---
 
@@ -449,12 +519,27 @@ src/main/kotlin/com/euver/kiwi/
 #### TopCallerFinderService（领域层核心服务）⭐
 - **职责**：顶层调用者查找的核心业务逻辑
 - **特点**：**异步执行**，不阻塞 IDE 主线程
-- **功能**：
-  - 递归分析方法调用链
-  - 向上追溯找到所有入口方法（无调用者的方法）
-  - 支持接口实现类的调用追溯
-  - 检测循环引用，防止无限递归
-  - 最大递归深度 50 层
+- **核心功能**：
+  - 从指定方法开始向上追溯调用链，找到所有顶层调用者（入口方法）
+  - 最大递归深度 50 层（MAX_DEPTH）
+- **支持的调用链场景**：
+  - 直接方法调用：通过 `MethodReferencesSearch` 查找方法引用
+  - 接口/父类方法调用：通过 `findSuperMethods` 查找所有父方法，并搜索其调用者
+  - Lambda 表达式调用：通过 `FunctionalExpressionSearch` 查找 Lambda 声明位置
+  - 方法引用调用：通过 `PsiMethodReferenceExpression` 识别方法引用
+- **函数式接口方法过滤**：
+  - 智能过滤 JDK 函数式接口方法（如 Consumer.accept、Function.apply 等）
+  - 通过 Lambda/方法引用追溯实际调用位置
+  - 支持 Spring 框架回调接口（TransactionCallback、RowMapper 等）
+- **保护机制**：
+  - 循环引用检测：使用 `visited` 集合记录已访问方法，避免无限递归
+  - 深度限制：超过 50 层自动终止，记录警告日志
+  - 生产代码范围搜索：自动排除测试代码目录
+- **关键方法**：
+  - `findTopCallers(method)`: 查找指定方法的所有顶层调用者
+  - `findAllCallers(method)`: 查找方法的所有调用者（包含接口/父类方法调用）
+  - `findLambdaDeclarationCallers(method)`: 查找 Lambda/方法引用的声明位置
+  - `createProductionScope()`: 创建生产代码搜索范围
 
 #### ExpandStatementUseCase（应用层用例）
 - **职责**：编排展开 Statement 的完整流程

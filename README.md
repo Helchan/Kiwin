@@ -45,18 +45,23 @@ Kiwi 是一款专为 Spring 项目开发设计的 IntelliJ IDEA 插件，旨在�
 
 ### 3. Get Top Callers Information
 
-查找 Java 方法或 MyBatis Statement 的所有顶层调用者（入口方法），自动递归分析调用链。
+查找 Java 方法或 MyBatis Statement 的所有顶层调用者（入口方法），自动递归分析调用链，找到所有最终的 API 入口点。
 
 **核心能力：**
 - 支持 Java 方法定义和方法调用表达式上触发
 - 支持 MyBatis XML Statement 上触发
 - 支持递归调用链分析（最大深度 50 层）
-- 支持接口实现类方法调用追溯
+- 支持接口/父类方法调用追溯
+- 支持 Lambda 表达式调用追溯（追踪到声明位置）
+- 支持方法引用调用追溯（Class::method）
+- 智能过滤函数式接口方法（Consumer、Function 等）
+- 自动排除测试代码，只搜索生产代码
 - 后台异步执行，不阻塞 IDE
 
 **使用场景：**
-- 分析某个底层方法被哪些 API 入口调用
-- 理解代码的影响范围，评估修改的风险
+- 调用链分析：分析某个底层方法被哪些 API 入口调用
+- 代码依赖关系梳理：理解代码的影响范围，评估修改的风险
+- 函数式编程调用追溯：追踪 Lambda 和方法引用的实际调用位置
 - 快速定位调用某个 MyBatis SQL 的所有 Controller 入口
 
 ## 使用方法

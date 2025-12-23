@@ -1,5 +1,15 @@
 # Kiwi Changelog
 
+## [0.0.58]
+### Changed
+- 全面更新 Kiwi 产品说明书，详细补充 TopCallerFinderService 的功能说明
+- 新增调用链场景说明：直接方法调用、接口/父类方法调用、Lambda表达式调用、方法引用调用
+- 新增技术特点说明：递归深度限制、函数式接口方法过滤、生产代码范围搜索
+- 新增函数式接口方法过滤列表说明（JDK函数式接口、Spring框架回调）
+- 新增 Lambda 表达式和方法引用调用追溯的使用示例
+- 更新 README.md 功能介绍，突出调用链分析核心能力
+- 完善 TopCallerFinderService 核心组件说明，增加关键方法说明
+
 ## [0.0.57]
 ### Fixed
 - 修复TopCallerFinderService在遇到Lambda表达式/函数式接口时调用链中断的问题
