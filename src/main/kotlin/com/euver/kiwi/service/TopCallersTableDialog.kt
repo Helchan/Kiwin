@@ -24,6 +24,8 @@ import java.awt.Component
 import java.awt.Desktop
 import java.awt.datatransfer.StringSelection
 import java.awt.event.ActionEvent
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -154,11 +156,19 @@ class TopCallersTableDialog private constructor(
         val table = JBTable(tableModel)
         table.autoCreateRowSorter = !isSqlFragmentMode  // SQL 片段模式下禁用排序（因为有单元格合并）
         
-        // 禁用自动调整，使用手动计算的列宽
-        table.autoResizeMode = javax.swing.JTable.AUTO_RESIZE_OFF
+        // 使用 AUTO_RESIZE_OFF 配合手动按比例分配列宽
+        table.autoResizeMode = JTable.AUTO_RESIZE_OFF
         
-        // 根据内容自适应列宽，最大宽度限制为80个字符
-        adjustColumnWidths(table, maxCharWidth = 80)
+        // 计算每列的内容宽度比例并分配列宽
+        val columnContentWidths = calculateColumnContentWidths(table)
+        
+        // 添加滚动面板的尺寸变化监听器，实现响应式布局
+        val scrollPane = JBScrollPane(table)
+        scrollPane.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent?) {
+                adjustColumnWidthsByProportion(table, columnContentWidths, scrollPane.viewport.width)
+            }
+        })
         
         // 启用单元格选择模式
         table.cellSelectionEnabled = true
@@ -172,7 +182,7 @@ class TopCallersTableDialog private constructor(
         // 设置右键菜单
         setupContextMenu(table)
 
-        panel.add(JBScrollPane(table), BorderLayout.CENTER)
+        panel.add(scrollPane, BorderLayout.CENTER)
         return panel
     }
 
@@ -302,53 +312,12 @@ class TopCallersTableDialog private constructor(
 
     /**
      * 设置右键菜单
+     * 根据用户需求：
+     * 1. StatementID 列有内容：显示 "跳转到XML"、"Copy Expanded Statement"、"复制"
+     * 2. 其他列有内容：显示 "跳转到源码"、"复制"
+     * 3. 无内容的单元格：不显示菜单
      */
     private fun setupContextMenu(table: JBTable) {
-        val popupMenu = JPopupMenu()
-        val navigateItem = JMenuItem("跳转到源码")
-        val copyItem = JMenuItem("复制")
-        val copyExpandedItem = JMenuItem("Copy Expanded Statement")
-        
-        popupMenu.add(navigateItem)
-        popupMenu.add(copyItem)
-        if (isSqlFragmentMode) {
-            popupMenu.add(copyExpandedItem)
-        }
-
-        navigateItem.addActionListener {
-            val selectedRow = table.selectedRow
-            val selectedCol = table.selectedColumn
-            if (selectedRow >= 0) {
-                if (isSqlFragmentMode && selectedCol == statementIdColumnIndex) {
-                    // StatementID 列：跳转到 XML
-                    val rowData = rowDataList.getOrNull(selectedRow)
-                    if (rowData?.statementId != null) {
-                        navigateToStatement(rowData.statementId)
-                    }
-                } else {
-                    // 其他列：跳转到 Java 源码
-                    val rowData = rowDataList.getOrNull(selectedRow)
-                    if (rowData != null) {
-                        navigateToMethod(rowData.methodInfo)
-                    }
-                }
-            }
-        }
-        
-        copyItem.addActionListener {
-            copySelectedCells(table)
-        }
-        
-        copyExpandedItem.addActionListener {
-            val selectedRow = table.selectedRow
-            if (selectedRow >= 0) {
-                val rowData = rowDataList.getOrNull(selectedRow)
-                if (rowData?.statementId != null) {
-                    copyExpandedStatement(rowData.statementId)
-                }
-            }
-        }
-        
         // 注册 Ctrl+C / Command+C 快捷键
         val copyKeyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_C, 
             java.awt.Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx)
@@ -364,24 +333,56 @@ class TopCallersTableDialog private constructor(
                 if (e.isPopupTrigger) {
                     val row = table.rowAtPoint(e.point)
                     val col = table.columnAtPoint(e.point)
-                    if (row >= 0 && col >= 0) {
-                        // 如果点击的单元格不在当前选择范围内，则选中该单元格
-                        if (!table.isCellSelected(row, col)) {
-                            table.setRowSelectionInterval(row, row)
-                            table.setColumnSelectionInterval(col, col)
+                    
+                    if (row < 0 || col < 0) return
+                    
+                    // 获取单元格内容
+                    val cellValue = table.getValueAt(row, col)?.toString() ?: ""
+                    if (cellValue.isBlank()) return  // 无内容不显示菜单
+                    
+                    // 选中该单元格
+                    table.setRowSelectionInterval(row, row)
+                    table.setColumnSelectionInterval(col, col)
+                    
+                    val rowData = rowDataList.getOrNull(row)
+                    
+                    // 判断是否是 StatementID 列
+                    val isStatementIdColumn = isSqlFragmentMode && col == statementIdColumnIndex
+                    
+                    // 构建菜单
+                    val popupMenu = JPopupMenu()
+                    
+                    if (isStatementIdColumn && rowData?.statementId != null) {
+                        // StatementID 列：跳转到XML、Copy Expanded Statement、复制
+                        val navigateToXmlItem = JMenuItem("跳转到XML")
+                        navigateToXmlItem.addActionListener {
+                            navigateToStatement(rowData.statementId)
                         }
+                        popupMenu.add(navigateToXmlItem)
                         
-                        // 根据列位置动态调整菜单项
-                        if (isSqlFragmentMode) {
-                            if (col == statementIdColumnIndex) {
-                                navigateItem.text = "跳转到 XML"
-                                copyExpandedItem.isVisible = true
-                            } else {
-                                navigateItem.text = "跳转到源码"
-                                copyExpandedItem.isVisible = false
-                            }
+                        val copyExpandedItem = JMenuItem("Copy Expanded Statement")
+                        copyExpandedItem.addActionListener {
+                            copyExpandedStatement(rowData.statementId)
                         }
+                        popupMenu.add(copyExpandedItem)
                         
+                        val copyItem = JMenuItem("复制")
+                        copyItem.addActionListener { copySelectedCells(table) }
+                        popupMenu.add(copyItem)
+                    } else if (rowData != null) {
+                        // 其他列：跳转到源码、复制
+                        val navigateToSourceItem = JMenuItem("跳转到源码")
+                        navigateToSourceItem.addActionListener {
+                            navigateToMethod(rowData.methodInfo)
+                        }
+                        popupMenu.add(navigateToSourceItem)
+                        
+                        val copyItem = JMenuItem("复制")
+                        copyItem.addActionListener { copySelectedCells(table) }
+                        popupMenu.add(copyItem)
+                    }
+                    
+                    if (popupMenu.componentCount > 0) {
                         popupMenu.show(e.component, e.x, e.y)
                     }
                 }
@@ -638,14 +639,15 @@ class TopCallersTableDialog private constructor(
                     }
                 }
                 
-                // 设置列宽度（自适应，最大 50 个字符宽度）
-                val maxCharWidth = 50
-                val maxColumnWidth = maxCharWidth * 256  // POI 使用 1/256 字符单位
+                // 设置列宽度（自适应内容+30像素，最大300像素）
+                // POI 列宽单位：1/256 字符宽度，1字符约7像素
+                val extraPadding = 30 * 256 / 7  // 30像素转换为POI单位
+                val maxPixelWidth = 300
+                val maxColumnWidth = maxPixelWidth * 256 / 7
                 for (colIndex in 0 until tableModel.columnCount) {
                     sheet.autoSizeColumn(colIndex)
-                    if (sheet.getColumnWidth(colIndex) > maxColumnWidth) {
-                        sheet.setColumnWidth(colIndex, maxColumnWidth)
-                    }
+                    val newWidth = minOf(sheet.getColumnWidth(colIndex) + extraPadding, maxColumnWidth)
+                    sheet.setColumnWidth(colIndex, newWidth)
                 }
                 
                 // SQL 片段模式下儈单元格合并
@@ -746,23 +748,21 @@ class TopCallersTableDialog private constructor(
     }
     
     /**
-     * 根据内容自适应调整列宽
+     * 计算每列内容的最大宽度（用于按比例分配列宽）
      * @param table 表格对象
-     * @param maxCharWidth 最大字符宽度限制
+     * @return 每列的最大内容宽度（像素）列表
      */
-    private fun adjustColumnWidths(table: JBTable, maxCharWidth: Int) {
+    private fun calculateColumnContentWidths(table: JBTable): List<Int> {
         val columnModel = table.columnModel
         val fontMetrics = table.getFontMetrics(table.font)
-        val charWidth = fontMetrics.charWidth('M') // 使用M字符作为平均字符宽度参考
-        val defaultMaxPixelWidth = maxCharWidth * charWidth
-        val statementIdMaxPixelWidth = 200 // StatementID 列最大宽度限制为 200 像素
         val padding = 16 // 左右内边距
+        val minColumnWidth = 50 // 最小列宽
         
-        for (colIndex in 0 until columnModel.columnCount) {
+        return (0 until columnModel.columnCount).map { colIndex ->
             var maxWidth = 0
             
             // 计算表头宽度
-            val headerValue = table.columnModel.getColumn(colIndex).headerValue?.toString() ?: ""
+            val headerValue = columnModel.getColumn(colIndex).headerValue?.toString() ?: ""
             val headerWidth = fontMetrics.stringWidth(headerValue) + padding
             maxWidth = maxOf(maxWidth, headerWidth)
             
@@ -773,14 +773,44 @@ class TopCallersTableDialog private constructor(
                 maxWidth = maxOf(maxWidth, cellWidth)
             }
             
-            // 应用最大宽度限制：StatementID 列使用 200 像素限制，其他列使用默认限制
-            val maxPixelWidth = if (isSqlFragmentMode && colIndex == statementIdColumnIndex) {
-                statementIdMaxPixelWidth
-            } else {
-                defaultMaxPixelWidth
-            }
-            val finalWidth = minOf(maxWidth, maxPixelWidth)
-            columnModel.getColumn(colIndex).preferredWidth = finalWidth
+            maxOf(maxWidth, minColumnWidth)
         }
+    }
+    
+    /**
+     * 根据内容宽度比例分配列宽
+     * 算法：根据各列最大内容宽度的比例分配总可用宽度
+     * 例如：若A列最大内容宽度为200px，B列为300px，C列为400px，
+     * 则A列宽度应为 (200/(200+300+400)) * 总可用宽度
+     * 
+     * @param table 表格对象
+     * @param contentWidths 每列的内容宽度列表
+     * @param availableWidth 可用总宽度
+     */
+    private fun adjustColumnWidthsByProportion(table: JBTable, contentWidths: List<Int>, availableWidth: Int) {
+        if (contentWidths.isEmpty() || availableWidth <= 0) return
+        
+        val columnModel = table.columnModel
+        val totalContentWidth = contentWidths.sum()
+        
+        if (totalContentWidth <= 0) return
+        
+        // 按比例分配宽度
+        var allocatedWidth = 0
+        for (colIndex in 0 until columnModel.columnCount) {
+            val proportion = contentWidths[colIndex].toDouble() / totalContentWidth
+            val columnWidth = if (colIndex == columnModel.columnCount - 1) {
+                // 最后一列使用剩余宽度，避免累计误差
+                availableWidth - allocatedWidth
+            } else {
+                (availableWidth * proportion).toInt()
+            }
+            
+            columnModel.getColumn(colIndex).preferredWidth = columnWidth
+            allocatedWidth += columnWidth
+        }
+        
+        // 强制刷新表格以应用新的列宽
+        table.doLayout()
     }
 }

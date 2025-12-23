@@ -8,7 +8,7 @@ import com.euver.kiwi.domain.service.TopCallerFinderService
 import com.euver.kiwi.parser.MyBatisXmlParser
 import com.euver.kiwi.service.ConsoleOutputService
 import com.euver.kiwi.service.NotificationService
-import com.euver.kiwi.service.TopCallersTableDialog
+import com.euver.kiwi.service.TopCallersTreeTableDialog
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -334,7 +334,7 @@ class FindTopCallerAction : AnAction() {
         NotificationService(project).showInfoNotification("找到 ${uniqueMethodInfoList.size} 个顶层调用者")
 
         if (topCallersWithStatements.isNotEmpty()) {
-            TopCallersTableDialog.createWithStatements(
+            TopCallersTreeTableDialog.createWithStatements(
                 project = project,
                 sourceMethodName = "SQL Fragment: $fragmentFullId",
                 topCallersWithStatements = topCallersWithStatements
@@ -393,7 +393,7 @@ class FindTopCallerAction : AnAction() {
         NotificationService(project).showInfoNotification("找到 ${topCallers.size} 个顶层调用者")
 
         if (methodInfoList.isNotEmpty()) {
-            TopCallersTableDialog.create(
+            TopCallersTreeTableDialog.create(
                 project = project,
                 sourceMethodName = sourceMethodName,
                 topCallers = methodInfoList

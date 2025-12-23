@@ -243,24 +243,48 @@ public class UserController {
 2. 将光标定位在方法定义上，或定位在方法调用表达式上
 3. 右键点击，在弹出菜单中选择 **"Kiwi" → "Get Top Callers Information"**
 
-**方式二：在 MyBatis XML 文件中触发**
+**方式二：在 MyBatis XML 文件中触发（Statement）**
 1. 打开 MyBatis Mapper XML 文件
 2. 将光标定位在 `<select>`、`<insert>`、`<update>` 或 `<delete>` 标签内
 3. 右键点击，在弹出菜单中选择 **"Kiwi" → "Get Top Callers Information"**
 
+**方式三：在 SQL 片段上触发**
+1. 打开 MyBatis Mapper XML 文件
+2. 将光标定位在 `<sql>` 标签内，或 `<include>` 标签的 refid 属性值上
+3. 右键点击，在弹出菜单中选择 **"Kiwi" → "Get Top Callers Information"**
+4. 系统会自动查找所有引用该 SQL 片段的 Statement，并分析这些 Statement 的顶层调用者
+
 #### 输出结果
 
-执行该功能后，结果会输出到 **Kiwi Console** 控制台窗口，包括：
+执行该功能后，结果会输出到以下位置：
+
+1. **Kiwi Console** - 在控制台窗口显示详细信息
+2. **TreeTable 弹窗** - 以层级结构展示顶层调用者信息，支持展开/折叠
+3. **通知消息** - 右下角显示操作结果提示
+
+**输出信息包括：**
 
 | 输出项 | 说明 |
 |--------|------|
-| 源方法 | 被分析的起始方法全限定名 |
+| 源方法 | 被分析的起始方法全限定名或 SQL 片段 ID |
 | 顶层调用者数量 | 找到的入口方法总数 |
 | 方法全限定名 | 每个顶层调用者的完整方法路径 |
 | 请求类型 | HTTP 请求方法（GET/POST/PUT/DELETE 等） |
 | 请求路径 | 完整的 API 请求路径 |
 | 类功能注释 | 类的 JavaDoc 功能描述 |
 | 功能注释 | 方法的 JavaDoc 功能描述 |
+| StatementID（SQL 片段模式） | 引用该片段的 Statement 全局 ID |
+
+**TreeTable 交互功能：**
+
+| 功能 | 说明 |
+|------|------|
+| 展开/折叠 | 点击节点展开或折叠子节点 |
+| 右键菜单 - 跳转到源码 | 跳转到顶层调用者方法的源码位置 |
+| 右键菜单 - 跳转到 XML | 跳转到 StatementID 对应的 XML 位置 |
+| 右键菜单 - Copy Expanded Statement | 复制展开后的完整 Statement |
+| 右键菜单 - 复制 | 复制单元格内容 |
+| Excel 导出 | 导出到 Excel 文件，支持单元格合并 |
 
 #### 支持的特性
 
@@ -269,6 +293,8 @@ public class UserController {
 | Java 方法定义上触发 | ✅ 支持 |
 | 方法调用表达式上触发（分析被调用方法） | ✅ 支持 |
 | MyBatis XML Statement 上触发 | ✅ 支持 |
+| **MyBatis SQL 片段（`<sql>` 标签）上触发** | ✅ 支持 |
+| **`<include>` 标签的 refid 上触发** | ✅ 支持 |
 | 递归调用链分析（最大深度 50 层） | ✅ 支持 |
 | 直接方法调用追溯 | ✅ 支持 |
 | 接口/父类方法调用追溯 | ✅ 支持 |
@@ -278,6 +304,8 @@ public class UserController {
 | 循环引用检测和保护 | ✅ 支持 |
 | 测试代码自动排除 | ✅ 支持 |
 | 后台异步执行（不阻塞 IDE） | ✅ 支持 |
+| **TreeTable 层级展示结果** | ✅ 支持 |
+| **Excel 导出（支持单元格合并）** | ✅ 支持 |
 
 #### 函数式接口方法过滤列表
 
@@ -467,18 +495,20 @@ src/main/kotlin/com/euver/kiwi/
 ├── action/                              # 表示层 - 用户交互
 │   ├── AssembleSqlAction.kt             # MyBatis SQL 组装 Action
 │   ├── ExtractMethodInfoAction.kt       # 提取方法信息 Action
-│   └── FindTopCallerAction.kt           # 查找顶层调用者 Action ⭐
+│   └── FindTopCallerAction.kt           # 查找顶层调用者 Action
 ├── application/                         # 应用层 - 用例编排
 │   └── ExpandStatementUseCase.kt        # 展开 Statement 用例（统一入口）
 ├── domain/                              # 领域层 - 核心业务逻辑
 │   ├── model/
 │   │   ├── ExpandContext.kt             # 展开上下文（跟踪状态和结果）
-│   │   └── MethodInfo.kt                # 方法信息模型 ⭐
+│   │   ├── MethodInfo.kt                # 方法信息模型
+│   │   └── TopCallerWithStatement.kt    # 顶层调用者与 Statement 关联模型 ⭐
 │   └── service/
 │       ├── MethodInfoExtractorService.kt # 方法信息提取服务
 │       ├── SqlFragmentResolver.kt       # 片段解析器接口（依赖倒置）
+│       ├── SqlFragmentUsageFinderService.kt # SQL 片段使用查找服务 ⭐
 │       ├── StatementExpanderService.kt  # 核心展开服务（可复用）
-│       └── TopCallerFinderService.kt    # 顶层调用者查找服务 ⭐
+│       └── TopCallerFinderService.kt    # 顶层调用者查找服务
 ├── infrastructure/                      # 基础设施层 - 技术实现
 │   └── resolver/
 │       └── SqlFragmentResolverImpl.kt   # 片段解析器实现
@@ -488,11 +518,13 @@ src/main/kotlin/com/euver/kiwi/
 │   └── AssemblyResult.kt                # 组装结果模型
 ├── parser/
 │   └── MyBatisXmlParser.kt              # XML 解析器
-└── service/                             # 基础服务
+└── service/                             # 基础服务与 UI 组件
     ├── MapperIndexService.kt            # Mapper 索引服务
     ├── ConsoleOutputService.kt          # 控制台输出服务
     ├── NotificationService.kt           # 通知服务
     ├── SqlAssembler.kt                  # SQL 组装服务（已迁移到领域层）
+    ├── TopCallersTableDialog.kt         # 顶层调用者表格弹窗（基础版）
+    ├── TopCallersTreeTableDialog.kt     # 顶层调用者 TreeTable 弹窗 ⭐
     └── MyBatisSqlToolWindowFactory.kt   # 控制台窗口工厂
 ```
 
@@ -516,7 +548,19 @@ src/main/kotlin/com/euver/kiwi/
   - 提取功能性 JavaDoc 注释（排除技术标签）
   - 支持重写方法的注释向上追溯
 
-#### TopCallerFinderService（领域层核心服务）⭐
+#### SqlFragmentUsageFinderService（领域层核心服务）⭐
+- **职责**：SQL 片段使用查找的核心业务逻辑
+- **功能**：
+  - 查找哪些 Statement 引用了指定的 SQL 片段
+  - 找到对应的 Mapper 接口方法
+  - 支持递归查找嵌套引用（SQL 片段被另一个 SQL 片段引用）
+  - 循环引用检测和保护
+  - 最大递归深度 50 层
+- **关键方法**：
+  - `findMapperMethodsUsingFragment(fragmentFullId)`: 查找引用指定片段的所有 Mapper 方法
+  - `findMapperMethodsWithStatementId(fragmentFullId)`: 查找引用者并返回 Statement ID 与方法的映射关系
+
+#### TopCallerFinderService（领域层核心服务）
 - **职责**：顶层调用者查找的核心业务逻辑
 - **特点**：**异步执行**，不阻塞 IDE 主线程
 - **核心功能**：
@@ -566,13 +610,24 @@ src/main/kotlin/com/euver/kiwi/
   - 调用 MethodInfoExtractorService 提取方法信息
   - 将结果输出到 Kiwi Console
 
-#### FindTopCallerAction（表示层）⭐
+#### TopCallersTreeTableDialog（表示层 UI 组件）⭐
+- **职责**：顶层调用者结果的层级展示
+- **功能**：
+  - 使用 TreeTable 实现层级结构展示（顶层调用者 → StatementID）
+  - 支持展开/折叠节点
+  - 右键菜单支持：跳转到源码、跳转到 XML、Copy Expanded Statement、复制
+  - 列宽自适应功能，支持响应式布局
+  - Excel 导出功能，支持单元格合并
+
+#### FindTopCallerAction（表示层）
 - **职责**：处理查找顶层调用者的用户右键菜单触发事件
 - **功能**：
   - 支持 Java 文件和 MyBatis XML 文件触发
+  - 支持 Statement 标签、SQL 片段标签和 include refid 触发
   - 识别方法调用表达式，分析被调用方法
-  - 调用 TopCallerFinderService 查找顶层调用者
+  - 调用 TopCallerFinderService 和 SqlFragmentUsageFinderService 查找顶层调用者
   - 为每个顶层调用者提取 MethodInfo 并输出
+  - 使用 TopCallersTreeTableDialog 展示结果
 
 #### MapperIndexService
 - **职责**：Mapper 文件索引管理
@@ -844,7 +899,32 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
 
 ## 版本历史
 
-### v0.0.42（当前版本）
+### v0.0.72（当前版本）
+- Excel 导出列宽调整为自适应宽度+30像素，超过300像素则按300像素
+- 修复 TreeTable 右键菜单混乱问题，优化右键菜单交互逻辑
+- 实现顶层调用者表格列宽自适应功能，支持响应式布局
+
+### v0.0.67
+- **重构顶层调用者展示组件**：将 JBTable 替换为 TreeTable 实现层级展示
+- 顶层调用者作为父节点，StatementID 作为子节点，支持展开/折叠
+- 保持所有原有功能：右键菜单、跳转功能、复制功能、Excel 导出（合并单元格）
+
+### v0.0.63
+- **新增 SQL 片段顶层调用者查找功能**：支持在 `<sql>` 标签或 `<include>` 的 refid 上触发
+- SQL 片段模式下顶层调用者表格新增 "StatementID" 列，展示引用该片段的 Statement 全局 ID
+- StatementID 列支持右键跳转到 XML 位置和 Copy Expanded Statement
+- 新增 `SqlFragmentUsageFinderService` 领域层核心服务
+- 新增 `TopCallerWithStatement` 领域模型
+- 新增 `TopCallersTreeTableDialog` 表示层组件
+
+### v0.0.57
+- 修复 Lambda 表达式/函数式接口调用链中断问题
+- 新增 Lambda 表达式声明位置追踪功能
+- 新增方法引用（Class::method）追踪功能
+- 新增 JDK 函数式接口方法过滤逻辑
+- 支持 Spring 框架常见回调接口识别
+
+### v0.0.42
 - **新增「获取顶层调用者」功能**：在 Java 方法或 MyBatis XML Statement 上右键可查找所有顶层调用者
 - 新增 `FindTopCallerAction` 表示层组件
 - 新增 `TopCallerFinderService` 领域层核心服务
