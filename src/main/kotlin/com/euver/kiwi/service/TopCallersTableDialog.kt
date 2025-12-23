@@ -102,6 +102,12 @@ class TopCallersTableDialog(
         val table = JBTable(tableModel)
         table.autoCreateRowSorter = true
         
+        // 禁用自动调整，使用手动计算的列宽
+        table.autoResizeMode = javax.swing.JTable.AUTO_RESIZE_OFF
+        
+        // 根据内容自适应列宽，最大宽度限制为80个字符
+        adjustColumnWidths(table, maxCharWidth = 80)
+        
         // 启用单元格选择模式
         table.cellSelectionEnabled = true
         table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION)
@@ -383,6 +389,39 @@ class TopCallersTableDialog(
             }
         } catch (e: Exception) {
             logger.warn("无法打开目录：${e.message}")
+        }
+    }
+    
+    /**
+     * 根据内容自适应调整列宽
+     * @param table 表格对象
+     * @param maxCharWidth 最大字符宽度限制
+     */
+    private fun adjustColumnWidths(table: JBTable, maxCharWidth: Int) {
+        val columnModel = table.columnModel
+        val fontMetrics = table.getFontMetrics(table.font)
+        val charWidth = fontMetrics.charWidth('M') // 使用M字符作为平均字符宽度参考
+        val maxPixelWidth = maxCharWidth * charWidth
+        val padding = 16 // 左右内边距
+        
+        for (colIndex in 0 until columnModel.columnCount) {
+            var maxWidth = 0
+            
+            // 计算表头宽度
+            val headerValue = table.columnModel.getColumn(colIndex).headerValue?.toString() ?: ""
+            val headerWidth = fontMetrics.stringWidth(headerValue) + padding
+            maxWidth = maxOf(maxWidth, headerWidth)
+            
+            // 计算每行内容宽度
+            for (rowIndex in 0 until table.rowCount) {
+                val value = table.getValueAt(rowIndex, colIndex)?.toString() ?: ""
+                val cellWidth = fontMetrics.stringWidth(value) + padding
+                maxWidth = maxOf(maxWidth, cellWidth)
+            }
+            
+            // 应用最大宽度限制
+            val finalWidth = minOf(maxWidth, maxPixelWidth)
+            columnModel.getColumn(colIndex).preferredWidth = finalWidth
         }
     }
 }
