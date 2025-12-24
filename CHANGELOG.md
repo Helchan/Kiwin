@@ -1,5 +1,21 @@
 # Kiwi Changelog
 
+## [0.0.88]
+### Fixed
+- 修复 "Get Top Callers Information" 功能的 IndexNotReadyException 异常
+  - 在开始查找前检查是否处于 Dumb 模式（索引中），如果是则等待索引完成
+  - 使用 DumbService.waitForSmartMode() 确保在 Smart Mode 下执行索引相关操作
+
+### Changed
+- 大幅优化 TopCallerFinderService 性能，解决长调用链执行时间过长问题
+  - 使用广度优先搜索（BFS）替代深度优先递归（DFS），避免栈溢出并提高效率
+  - 新增方法键缓存机制（ConcurrentHashMap），避免同一方法的签名被重复计算
+  - 新增生产代码搜索范围缓存，避免重复创建 GlobalSearchScope
+  - 将多个独立的 runReadAction 调用合并为批量读取，减少线程上下文切换开销
+  - 使用 ReadAction.compute 替代 ApplicationManager.runReadAction，代码更简洁
+  - 添加 ProgressManager.checkCanceled() 调用，支持用户中途取消长时间运行的操作
+  - 内部方法重构：新增 getMethodKeyInternal、findDirectCallersInternal 等在 ReadAction 上下文中直接调用的方法
+
 ## [0.0.87]
 ### Fixed
 - 修复 Java 代码中右键菜单 "Copy Expanded Statement" 选项的启用逻辑

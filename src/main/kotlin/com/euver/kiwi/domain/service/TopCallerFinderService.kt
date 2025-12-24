@@ -1,7 +1,10 @@
 package com.euver.kiwi.domain.service
 
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiMethod
 import com.intellij.openapi.roots.ProjectRootManager
@@ -13,6 +16,7 @@ import com.intellij.psi.search.searches.MethodReferencesSearch
 import com.intellij.psi.search.searches.OverridingMethodsSearch
 import com.intellij.psi.search.searches.FunctionalExpressionSearch
 import com.intellij.psi.util.PsiTreeUtil
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 顶层调用者查找服务
@@ -27,6 +31,13 @@ import com.intellij.psi.util.PsiTreeUtil
 class TopCallerFinderService(private val project: Project) {
 
     private val logger = thisLogger()
+    
+    // 方法键缓存，避免重复计算
+    private val methodKeyCache = ConcurrentHashMap<PsiMethod, String>()
+    
+    // 生产代码搜索范围缓存
+    @Volatile
+    private var cachedProductionScope: GlobalSearchScope? = null
 
     companion object {
         private const val MAX_DEPTH = 50
@@ -67,91 +78,221 @@ class TopCallerFinderService(private val project: Project) {
      * @return 顶层调用者方法集合（已去重，不包含起始方法本身）
      */
     fun findTopCallers(method: PsiMethod): Set<PsiMethod> {
-        val methodFullName = ApplicationManager.getApplication().runReadAction<String> {
+        // 清理缓存，每次新的查找使用新的缓存
+        clearCache()
+        
+        // 确保在 Smart Mode 下运行，避免 IndexNotReadyException
+        val dumbService = DumbService.getInstance(project)
+        if (dumbService.isDumb) {
+            logger.warn("当前处于 Dumb 模式（索引中），等待索引完成...")
+            // 等待索引完成，最多等待 30 秒
+            dumbService.waitForSmartMode()
+        }
+        
+        val methodFullName = ReadAction.compute<String, RuntimeException> {
             "${method.containingClass?.qualifiedName}.${method.name}"
         }
         logger.info("开始查找方法的顶层调用者: $methodFullName")
         
         val topCallers = mutableSetOf<PsiMethod>()
         val visited = mutableSetOf<String>()
-        val sourceMethodKey = getMethodKey(method)
+        val sourceMethodKey = getMethodKeyCached(method)
         
-        findTopCallersRecursively(method, topCallers, visited, 0)
+        // 使用广度优先搜索（BFS）代替深度优先递归，减少栈深度和提高效率
+        findTopCallersBFS(method, topCallers, visited)
         
         // 排除起始方法本身：如果起始方法没有调用者，不应该将它返回为顶层调用者
-        val filteredCallers = topCallers.filter { getMethodKey(it) != sourceMethodKey }.toSet()
+        val filteredCallers = topCallers.filter { getMethodKeyCached(it) != sourceMethodKey }.toSet()
         
         logger.info("找到 ${filteredCallers.size} 个顶层调用者，共访问了 ${visited.size} 个不同方法")
         return filteredCallers
     }
-
+    
     /**
-     * 递归查找顶层调用者
+     * 清理缓存
      */
-    private fun findTopCallersRecursively(
-        method: PsiMethod,
+    private fun clearCache() {
+        methodKeyCache.clear()
+        cachedProductionScope = null
+    }
+    
+    /**
+     * 使用广度优先搜索查找顶层调用者
+     * 优点：避免深度递归导致的栈溢出，更容易控制和取消
+     */
+    private fun findTopCallersBFS(
+        startMethod: PsiMethod,
         topCallers: MutableSet<PsiMethod>,
-        visited: MutableSet<String>,
-        depth: Int
+        visited: MutableSet<String>
     ) {
-        if (depth > MAX_DEPTH) {
-            val methodKey = getMethodKey(method)
-            logger.warn("达到最大递归深度限制: $MAX_DEPTH，当前方法: $methodKey，可能存在过深的调用链或循环引用")
-            return
-        }
-
-        val methodKey = getMethodKey(method)
-        if (methodKey in visited) {
-            logger.debug("方法已访问，跳过: $methodKey")
-            return
-        }
-        visited.add(methodKey)
-
-        // 检查是否是函数式接口方法，如果是则需要特殊处理
-        if (isFunctionalInterfaceMethod(method)) {
-            logger.info("检测到函数式接口方法: $methodKey，尝试通过Lambda/方法引用追溯实际调用者")
-            // 对于函数式接口方法，尝试查找Lambda和方法引用的声明位置
-            val lambdaCallers = findLambdaDeclarationCallers(method)
-            if (lambdaCallers.isNotEmpty()) {
-                logger.info("找到 ${lambdaCallers.size} 个通过Lambda/方法引用的调用者")
-                for (caller in lambdaCallers) {
-                    findTopCallersRecursively(caller, topCallers, visited, depth + 1)
+        val queue = ArrayDeque<Pair<PsiMethod, Int>>() // 方法和当前深度
+        queue.add(startMethod to 0)
+        
+        while (queue.isNotEmpty()) {
+            // 检查是否被取消
+            ProgressManager.checkCanceled()
+            
+            val (method, depth) = queue.removeFirst()
+            
+            if (depth > MAX_DEPTH) {
+                val methodKey = getMethodKeyCached(method)
+                logger.warn("达到最大递归深度限制: $MAX_DEPTH，当前方法: $methodKey")
+                continue
+            }
+            
+            val methodKey = getMethodKeyCached(method)
+            if (methodKey in visited) {
+                continue
+            }
+            visited.add(methodKey)
+            
+            // 检查是否是函数式接口方法
+            if (isFunctionalInterfaceMethodCached(method)) {
+                logger.debug("检测到函数式接口方法: $methodKey，尝试通过Lambda/方法引用追溯实际调用者")
+                val lambdaCallers = findLambdaDeclarationCallers(method)
+                if (lambdaCallers.isNotEmpty()) {
+                    logger.debug("找到 ${lambdaCallers.size} 个通过Lambda/方法引用的调用者")
+                    for (caller in lambdaCallers) {
+                        queue.add(caller to depth + 1)
+                    }
+                    continue
                 }
-                return
             }
-            // 如果找不到Lambda调用者，不将函数式接口方法作为顶层调用者，继续常规搜索
-            logger.info("未找到Lambda/方法引用的调用者，尝试常规调用链追溯")
-        }
-
-        // 查找该方法及其所实现/重写的接口或父类方法的所有调用者
-        val callers = findAllCallers(method)
-
-        if (callers.isEmpty()) {
-            // 如果是函数式接口方法，不将其作为顶层调用者
-            if (!isFunctionalInterfaceMethod(method)) {
-                topCallers.add(method)
-                logger.debug("找到顶层调用者: $methodKey")
+            
+            // 批量查找所有调用者
+            val callers = findAllCallersBatched(method)
+            
+            if (callers.isEmpty()) {
+                // 没有调用者，是顶层调用者
+                if (!isFunctionalInterfaceMethodCached(method)) {
+                    topCallers.add(method)
+                    logger.debug("找到顶层调用者: $methodKey")
+                }
             } else {
-                logger.debug("跳过函数式接口方法作为顶层调用者: $methodKey")
-            }
-        } else {
-            logger.debug("方法 $methodKey 有 ${callers.size} 个调用者，继续向上追溯")
-            for (caller in callers) {
-                findTopCallersRecursively(caller, topCallers, visited, depth + 1)
+                // 将调用者加入队列继续搜索
+                for (caller in callers) {
+                    queue.add(caller to depth + 1)
+                }
             }
         }
     }
 
     /**
-     * 判断方法是否是函数式接口方法
+     * 带缓存的函数式接口方法检查
      */
-    private fun isFunctionalInterfaceMethod(method: PsiMethod): Boolean {
-        return ApplicationManager.getApplication().runReadAction<Boolean> {
-            val className = method.containingClass?.qualifiedName ?: return@runReadAction false
-            val methodName = method.name
-            val fullName = "$className.$methodName"
-            fullName in FUNCTIONAL_INTERFACE_METHODS
+    private fun isFunctionalInterfaceMethodCached(method: PsiMethod): Boolean {
+        val methodKey = getMethodKeyCached(method)
+        // 简单判断：检查方法签名是否在函数式接口方法集合中
+        val className = methodKey.substringAfter(" ").substringBefore(".")
+        val methodName = methodKey.substringAfter(".").substringBefore("(")
+        val fullName = "$className.$methodName"
+        return fullName in FUNCTIONAL_INTERFACE_METHODS
+    }
+    
+    /**
+     * 批量查找所有调用者（优化版本）
+     * 在单个 ReadAction 中完成所有查找操作
+     */
+    private fun findAllCallersBatched(method: PsiMethod): List<PsiMethod> {
+        return ReadAction.compute<List<PsiMethod>, RuntimeException> {
+            ProgressManager.checkCanceled()
+            
+            val allCallers = mutableSetOf<String>()
+            val callerMethods = mutableListOf<PsiMethod>()
+            val scope = getProductionScope()
+            
+            // 1. 查找该方法本身的直接调用者
+            val directCallers = findDirectCallersInternal(method, scope)
+            for (caller in directCallers) {
+                val key = getMethodKeyInternal(caller)
+                if (key !in allCallers) {
+                    allCallers.add(key)
+                    callerMethods.add(caller)
+                }
+            }
+            
+            // 2. 查找该方法所实现/重写的父类或接口方法的调用者
+            val superMethods = method.findSuperMethods().toList()
+            for (superMethod in superMethods) {
+                ProgressManager.checkCanceled()
+                val superCallers = findDirectCallersInternal(superMethod, scope)
+                for (caller in superCallers) {
+                    val key = getMethodKeyInternal(caller)
+                    if (key !in allCallers) {
+                        allCallers.add(key)
+                        callerMethods.add(caller)
+                    }
+                }
+            }
+            
+            callerMethods
         }
+    }
+    
+    /**
+     * 内部方法：在 ReadAction 上下文中查找直接调用者
+     */
+    private fun findDirectCallersInternal(method: PsiMethod, scope: GlobalSearchScope): List<PsiMethod> {
+        ProgressManager.checkCanceled()
+        
+        val references = MethodReferencesSearch.search(method, scope, true).findAll()
+        val projectFileIndex = ProjectRootManager.getInstance(project).fileIndex
+        
+        return references.mapNotNull { reference ->
+            val callerMethod = PsiTreeUtil.getParentOfType(reference.element, PsiMethod::class.java)
+            if (callerMethod != null) {
+                val containingFile = callerMethod.containingFile?.virtualFile
+                if (containingFile != null && !projectFileIndex.isInTestSourceContent(containingFile)) {
+                    callerMethod
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
+        }.distinctBy { getMethodKeyInternal(it) }
+    }
+    
+    /**
+     * 内部方法：生成方法键（在 ReadAction 上下文中调用）
+     */
+    private fun getMethodKeyInternal(method: PsiMethod): String {
+        // 先检查缓存
+        methodKeyCache[method]?.let { return it }
+        
+        val className = method.containingClass?.qualifiedName ?: "UnknownClass"
+        val methodName = method.name
+        val returnType = method.returnType?.canonicalText ?: "void"
+        val params = method.parameterList.parameters.joinToString(",") { 
+            it.type.presentableText 
+        }
+        val key = "$returnType $className.$methodName($params)"
+        
+        // 缓存结果
+        methodKeyCache[method] = key
+        return key
+    }
+
+    /**
+     * 获取缓存的生产代码搜索范围
+     * 必须在 ReadAction 中调用
+     */
+    private fun getProductionScope(): GlobalSearchScope {
+        cachedProductionScope?.let { return it }
+        
+        val projectScope = GlobalSearchScope.projectScope(project)
+        val projectFileIndex = ProjectRootManager.getInstance(project).fileIndex
+        
+        val scope = projectScope.intersectWith(object : GlobalSearchScope(project) {
+            override fun contains(file: com.intellij.openapi.vfs.VirtualFile): Boolean {
+                return !projectFileIndex.isInTestSourceContent(file)
+            }
+            override fun isSearchInModuleContent(aModule: com.intellij.openapi.module.Module): Boolean = true
+            override fun isSearchInLibraries(): Boolean = false
+        })
+        
+        cachedProductionScope = scope
+        return scope
     }
 
     /**
@@ -159,157 +300,65 @@ class TopCallerFinderService(private val project: Project) {
      * 用于追溯函数式接口调用的实际调用者
      */
     private fun findLambdaDeclarationCallers(method: PsiMethod): List<PsiMethod> {
-        val callers = mutableListOf<PsiMethod>()
-        val scope = createProductionScope()
-        
-        ApplicationManager.getApplication().runReadAction {
+        return ReadAction.compute<List<PsiMethod>, RuntimeException> {
+            ProgressManager.checkCanceled()
+            
+            val callers = mutableListOf<PsiMethod>()
+            val scope = getProductionScope()
+            val projectFileIndex = ProjectRootManager.getInstance(project).fileIndex
+            
             // 获取方法所在的接口/类
-            val containingClass = method.containingClass ?: return@runReadAction
+            val containingClass = method.containingClass ?: return@compute emptyList()
             
             // 查找所有实现该函数式接口的Lambda表达式和方法引用
             try {
                 val functionalExpressions = FunctionalExpressionSearch.search(containingClass, scope).findAll()
                 
                 for (expression in functionalExpressions) {
+                    ProgressManager.checkCanceled()
                     when (expression) {
                         is PsiLambdaExpression -> {
-                            // Lambda表达式：查找包含它的方法
                             val enclosingMethod = PsiTreeUtil.getParentOfType(expression, PsiMethod::class.java)
-                            if (enclosingMethod != null && !isInTestSource(enclosingMethod)) {
-                                callers.add(enclosingMethod)
-                                logger.debug("Lambda表达式声明位置: ${getMethodKey(enclosingMethod)}")
+                            if (enclosingMethod != null) {
+                                val containingFile = enclosingMethod.containingFile?.virtualFile
+                                if (containingFile != null && !projectFileIndex.isInTestSourceContent(containingFile)) {
+                                    callers.add(enclosingMethod)
+                                }
                             }
                         }
                         is PsiMethodReferenceExpression -> {
-                            // 方法引用：查找包含它的方法
                             val enclosingMethod = PsiTreeUtil.getParentOfType(expression, PsiMethod::class.java)
-                            if (enclosingMethod != null && !isInTestSource(enclosingMethod)) {
-                                callers.add(enclosingMethod)
-                                logger.debug("方法引用声明位置: ${getMethodKey(enclosingMethod)}")
+                            if (enclosingMethod != null) {
+                                val containingFile = enclosingMethod.containingFile?.virtualFile
+                                if (containingFile != null && !projectFileIndex.isInTestSourceContent(containingFile)) {
+                                    callers.add(enclosingMethod)
+                                }
                             }
                         }
                     }
                 }
+            } catch (e: com.intellij.openapi.progress.ProcessCanceledException) {
+                throw e // 重新抛出取消异常
             } catch (e: Exception) {
                 logger.warn("查找Lambda/方法引用时出错: ${e.message}")
             }
-        }
-        
-        return callers.distinctBy { getMethodKey(it) }
-    }
-
-    /**
-     * 查找方法的所有调用者（包括通过接口或父类调用的情况）
-     * 关键点：当实现类方法重写了接口方法时，调用者可能调用的是接口方法
-     * 因此需要同时搜索该方法及其所实现的父接口/父类方法的调用者
-     */
-    private fun findAllCallers(method: PsiMethod): List<PsiMethod> {
-        val allCallers = mutableSetOf<String>()
-        val callerMethods = mutableListOf<PsiMethod>()
-
-        // 1. 查找该方法本身的直接调用者
-        val directCallers = findDirectCallers(method)
-        for (caller in directCallers) {
-            val key = getMethodKey(caller)
-            if (key !in allCallers) {
-                allCallers.add(key)
-                callerMethods.add(caller)
-            }
-        }
-
-        // 2. 查找该方法所实现/重写的父类或接口方法的调用者
-        val superMethods = findSuperMethods(method)
-        for (superMethod in superMethods) {
-            val superCallers = findDirectCallers(superMethod)
-            for (caller in superCallers) {
-                val key = getMethodKey(caller)
-                if (key !in allCallers) {
-                    allCallers.add(key)
-                    callerMethods.add(caller)
-                }
-            }
-        }
-
-        return callerMethods
-    }
-
-    /**
-     * 查找方法所实现或重写的所有父类/接口方法
-     */
-    private fun findSuperMethods(method: PsiMethod): List<PsiMethod> {
-        return ApplicationManager.getApplication().runReadAction<List<PsiMethod>> {
-            method.findSuperMethods().toList()
-        }
-    }
-
-    /**
-     * 查找直接调用指定方法的所有方法
-     * 注意：只搜索生产代码，排除测试代码
-     */
-    private fun findDirectCallers(method: PsiMethod): List<PsiMethod> {
-        val scope = createProductionScope()
-        val references = ApplicationManager.getApplication().runReadAction<Collection<com.intellij.psi.PsiReference>> {
-            MethodReferencesSearch.search(method, scope, true).findAll()
-        }
-
-        return references.mapNotNull { reference ->
-            ApplicationManager.getApplication().runReadAction<PsiMethod?> {
-                val callerMethod = PsiTreeUtil.getParentOfType(reference.element, PsiMethod::class.java)
-                // 再次过滤，确保调用者不在测试源码中
-                if (callerMethod != null && !isInTestSource(callerMethod)) {
-                    callerMethod
-                } else {
-                    null
-                }
-            }
-        }.distinctBy { getMethodKey(it) }
-    }
-
-    /**
-     * 创建生产代码搜索范围（排除测试目录）
-     */
-    private fun createProductionScope(): GlobalSearchScope {
-        return ApplicationManager.getApplication().runReadAction<GlobalSearchScope> {
-            val projectScope = GlobalSearchScope.projectScope(project)
-            val projectFileIndex = ProjectRootManager.getInstance(project).fileIndex
             
-            // 过滤掉测试源码目录
-            projectScope.intersectWith(object : GlobalSearchScope(project) {
-                override fun contains(file: com.intellij.openapi.vfs.VirtualFile): Boolean {
-                    return !projectFileIndex.isInTestSourceContent(file)
-                }
-
-                override fun isSearchInModuleContent(aModule: com.intellij.openapi.module.Module): Boolean = true
-                override fun isSearchInLibraries(): Boolean = false
-            })
+            callers.distinctBy { getMethodKeyInternal(it) }
         }
     }
 
     /**
-     * 判断方法是否在测试源码中
+     * 带缓存的方法键获取
+     * 自动处理 ReadAction 上下文
      */
-    private fun isInTestSource(method: PsiMethod): Boolean {
-        return ApplicationManager.getApplication().runReadAction<Boolean> {
-            val containingFile = method.containingFile?.virtualFile ?: return@runReadAction false
-            val projectFileIndex = ProjectRootManager.getInstance(project).fileIndex
-            projectFileIndex.isInTestSourceContent(containingFile)
+    private fun getMethodKeyCached(method: PsiMethod): String {
+        // 先检查缓存
+        methodKeyCache[method]?.let { return it }
+        
+        // 缓存未命中，需要计算
+        return ReadAction.compute<String, RuntimeException> {
+            getMethodKeyInternal(method)
         }
     }
 
-    /**
-     * 生成方法的唯一标识键
-     * 包含返回类型和参数类型签名以确保唯一性，避免重载方法被错误去重
-     */
-    private fun getMethodKey(method: PsiMethod): String {
-        return ApplicationManager.getApplication().runReadAction<String> {
-            val className = method.containingClass?.qualifiedName ?: "UnknownClass"
-            val methodName = method.name
-            val returnType = method.returnType?.canonicalText ?: "void"
-            val params = method.parameterList.parameters.joinToString(",") { 
-                // 使用 presentableText 保留泛型信息，避免类型擦除导致的冲突
-                it.type.presentableText 
-            }
-            "$returnType $className.$methodName($params)"
-        }
-    }
 }
