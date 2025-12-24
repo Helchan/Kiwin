@@ -18,6 +18,7 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.xml.XmlAttributeValue
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
+import com.euver.kiwi.service.MapperIndexService
 
 /**
  * MyBatis SQL 组装 Action
@@ -67,13 +68,13 @@ class AssembleSqlAction : AnAction() {
                 
                 // 场景1：检查光标是否在 Mapper 接口的方法定义上
                 val method = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java)
-                if (method != null && isMapperMethod(method)) {
+                if (method != null && isMapperMethod(project, method)) {
                     e.presentation.isEnabled = true
                     return
                 }
                 
                 // 场景2：检查光标是否在方法调用表达式上（如 myDao.getInfoById()）
-                val resolvedMethod = findMapperMethodFromCallExpression(element)
+                val resolvedMethod = findMapperMethodFromCallExpression(project, element)
                 e.presentation.isEnabled = resolvedMethod != null
             }
             else -> {
@@ -154,7 +155,7 @@ class AssembleSqlAction : AnAction() {
         val element = psiFile.findElementAt(editor.caretModel.offset)
         
         // 尝试两种场景获取 Mapper 方法
-        val (mapperMethod, source) = findMapperMethodInfo(element)
+        val (mapperMethod, source) = findMapperMethodInfo(project, element)
         
         if (mapperMethod == null) {
             NotificationService(project).showErrorNotification("未找到 Mapper 接口方法")
@@ -199,17 +200,17 @@ class AssembleSqlAction : AnAction() {
      * 查找 Mapper 方法信息
      * @return Pair<方法, 来源描述>，如果未找到则返回 Pair(null, "")
      */
-    private fun findMapperMethodInfo(element: PsiElement?): Pair<PsiMethod?, String> {
+    private fun findMapperMethodInfo(project: Project, element: PsiElement?): Pair<PsiMethod?, String> {
         if (element == null) return Pair(null, "")
         
         // 场景1：直接在 Mapper 接口方法定义上
         val directMethod = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java)
-        if (directMethod != null && isMapperMethod(directMethod)) {
+        if (directMethod != null && isMapperMethod(project, directMethod)) {
             return Pair(directMethod, "接口方法定义")
         }
         
         // 场景2：在方法调用表达式上（如 myDao.getInfoById()）
-        val resolvedMethod = findMapperMethodFromCallExpression(element)
+        val resolvedMethod = findMapperMethodFromCallExpression(project, element)
         if (resolvedMethod != null) {
             return Pair(resolvedMethod, "方法调用")
         }
@@ -221,7 +222,7 @@ class AssembleSqlAction : AnAction() {
      * 从方法调用表达式中查找 Mapper 方法
      * 支持场景：myDao.getInfoById(参数) 中的 getInfoById 调用
      */
-    private fun findMapperMethodFromCallExpression(element: PsiElement?): PsiMethod? {
+    private fun findMapperMethodFromCallExpression(project: Project, element: PsiElement?): PsiMethod? {
         if (element == null) return null
         
         // 向上查找方法调用表达式
@@ -232,7 +233,7 @@ class AssembleSqlAction : AnAction() {
         val resolvedMethod = methodCallExpr.resolveMethod() ?: return null
         
         // 检查是否为 Mapper 接口方法
-        return if (isMapperMethod(resolvedMethod)) resolvedMethod else null
+        return if (isMapperMethod(project, resolvedMethod)) resolvedMethod else null
     }
 
     /**
@@ -263,11 +264,20 @@ class AssembleSqlAction : AnAction() {
 
     /**
      * 判断是否为 Mapper 接口方法
-     * 简单判断：在接口中定义的方法即认为是 Mapper 方法
+     * 判断条件：
+     * 1. 方法在接口中定义
+     * 2. 该接口有对应的 MyBatis Mapper XML 文件（通过 namespace 匹配）
      */
-    private fun isMapperMethod(method: PsiMethod): Boolean {
+    private fun isMapperMethod(project: Project, method: PsiMethod): Boolean {
         val containingClass = method.containingClass ?: return false
-        return containingClass.isInterface
+        if (!containingClass.isInterface) return false
+        
+        // 获取接口的全限定名（即 namespace）
+        val namespace = containingClass.qualifiedName ?: return false
+        
+        // 检查是否存在对应的 Mapper XML 文件
+        val mapperIndexService = MapperIndexService.getInstance(project)
+        return mapperIndexService.findMapperFileByNamespace(namespace) != null
     }
 
     /**

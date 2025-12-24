@@ -1,5 +1,61 @@
 # Kiwi Changelog
 
+## [0.0.87]
+### Fixed
+- 修复 Java 代码中右键菜单 "Copy Expanded Statement" 选项的启用逻辑
+  - 之前的问题：任何接口方法都会被误认为是 Mapper 方法，导致调用非 Mapper 接口的方法（如 userService.createUser()）时也会显示可用的菜单项
+  - 修复后：isMapperMethod() 方法会验证接口是否存在对应的 MyBatis Mapper XML 文件（通过 namespace 匹配）
+  - 只有当接口的全限定名与某个 Mapper XML 的 namespace 匹配时，才认为是 Mapper 方法
+
+## [0.0.86]
+### Changed
+- 优化右键菜单 "跳转到源码" 的显示逻辑
+  - "跳转到源码" 现在只在 Method 列（有内容时）的右键菜单中显示
+  - 其他列（Seq、Type、Request Path、Class Comment、Method Comment、Package）不再显示跳转到源码选项
+  - StatementID 列保持原有行为（显示跳转到XML、Copy Expanded Statement）
+
+## [0.0.85]
+### Changed
+- 优化右键菜单 "Expand All" 和 "Collapse All" 的触发范围
+  - 现在在对话框面板的任意位置右键都可以显示展开/折叠菜单
+  - 包括空白区域、滚动面板边缘、无内容的单元格
+  - 菜单显示逻辑不变（根据当前是否存在可展开/可折叠的节点来决定显示）
+
+## [0.0.84]
+### Added
+- TreeTable 表格新增类似 Excel 的多选复制功能
+  - 支持通过鼠标拖拽或 Ctrl/Cmd+点击选择多个单元格
+  - 选中多个单元格后，Ctrl+C/Cmd+C 可复制所有选中内容
+  - 复制格式为制表符分隔列、换行符分隔行，与 Excel 兼容
+  - 可直接粘贴到 Excel 或其他表格应用
+
+### Changed
+- 右键菜单逻辑优化
+  - 多选模式（选中多个单元格）：右键菜单只显示"复制"选项
+  - 单选模式：保持原有菜单项（跳转到源码/XML、Copy Expanded Statement、复制）
+
+## [0.0.83]
+### Changed
+- 优化右键菜单“复制”功能
+  - 复制功能改为复制当前选中的单元格内容，而不是整行
+  - “复制”菜单项移到右键菜单末尾位置
+  - 快捷键 Ctrl+C/Cmd+C 同样复制当前选中单元格
+
+## [0.0.82]
+### Changed
+- TreeTable 折叠/展开功能改进
+  - 默认状态改为折叠，打开时所有节点都处于折叠状态
+  - 右键菜单新增 "Expand All" 和 "Collapse All" 功能
+  - 智能菜单显示：无子节点时不显示；全展开时只显示折叠；全折叠时只显示展开；混合状态时同时显示
+  - 排序操作后保持当前的展开/折叠状态
+
+## [0.0.81]
+### Fixed
+- 修复 TreeTable 层级折叠功能不显示的问题
+  - 将第一列（Seq）从普通 ColumnInfo 改为 TreeColumnInfo 类型
+  - TreeTable 现在正确显示展开/折叠控件（▶/▼ 三角形图标）
+  - 同一个顶层调用者涉及多个 Statement 时，可以折叠/展开子节点
+
 ## [0.0.80]
 ### Changed
 - 同步更新 Kiwi产品说明书.md 和 README.md 文档，确保与代码功能保持一致

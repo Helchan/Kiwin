@@ -14,6 +14,7 @@ import com.intellij.psi.PsiMethod
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.treetable.ListTreeTableModelOnColumns
+import com.intellij.ui.treeStructure.treetable.TreeColumnInfo
 import com.intellij.ui.treeStructure.treetable.TreeTableModel
 import com.intellij.util.ui.ColumnInfo
 import org.apache.poi.ss.usermodel.FillPatternType
@@ -39,6 +40,7 @@ import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.JTableHeader
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.TreePath
+import javax.swing.ListSelectionModel
 import com.intellij.ui.treeStructure.treetable.TreeTable
 import java.awt.Component
 import java.awt.Cursor
@@ -99,6 +101,9 @@ class TopCallersTreeTableDialog private constructor(
         ) : TreeNodeData() {
             val type: String get() = if (methodInfo.isExternalInterface()) "API" else "Normal"
             val methodDisplay: String get() = "${methodInfo.simpleClassName}.${methodInfo.methodSignature}"
+            
+            // TreeColumnInfo 使用 toString() 显示内容
+            override fun toString(): String = seqNumber.toString()
         }
         
         /**
@@ -107,7 +112,10 @@ class TopCallersTreeTableDialog private constructor(
         data class StatementData(
             val statementId: String,
             val parentMethodInfo: MethodInfo
-        ) : TreeNodeData()
+        ) : TreeNodeData() {
+            // 子节点显示空字符串（序号列不显示内容）
+            override fun toString(): String = ""
+        }
     }
     
     /**
@@ -217,8 +225,13 @@ class TopCallersTreeTableDialog private constructor(
         treeTable.tree.isRootVisible = false
         treeTable.tree.showsRootHandles = true
         
-        // 展开所有节点
-        expandAllNodes()
+        // 启用单元格选择模式，支持类似 Excel 的多选功能
+        treeTable.setRowSelectionAllowed(true)
+        treeTable.setColumnSelectionAllowed(true)
+        treeTable.selectionModel.selectionMode = ListSelectionModel.MULTIPLE_INTERVAL_SELECTION
+        treeTable.columnModel.selectionModel.selectionMode = ListSelectionModel.MULTIPLE_INTERVAL_SELECTION
+        
+        // 默认折叠所有节点（不调用 expandAllNodes）
         
         // 使用 AUTO_RESIZE_OFF 配合手动按比例分配列宽
         treeTable.autoResizeMode = JTable.AUTO_RESIZE_OFF
@@ -349,8 +362,24 @@ class TopCallersTreeTableDialog private constructor(
     
     /**
      * 根据当前排序状态重建树
+     * 保持当前的展开/折叠状态
      */
     private fun rebuildTreeWithCurrentSort() {
+        // 保存当前展开的节点（通过 qualifiedName 标识）
+        val expandedMethods = mutableSetOf<String>()
+        val tree = treeTable.tree
+        val root = treeModel.root as DefaultMutableTreeNode
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i) as DefaultMutableTreeNode
+            val nodeData = child.userObject as? TreeNodeData.TopCallerData
+            if (nodeData != null && child.childCount > 0) {
+                val path = javax.swing.tree.TreePath(arrayOf(root, child))
+                if (tree.isExpanded(path)) {
+                    expandedMethods.add(nodeData.methodInfo.qualifiedName)
+                }
+            }
+        }
+        
         // 清空导出数据和合并信息
         exportDataList.clear()
         mergeInfo.clear()
@@ -359,7 +388,6 @@ class TopCallersTreeTableDialog private constructor(
         val comparator = getCurrentSortComparator()
         
         // 重建树模型
-        val root = treeModel.root as DefaultMutableTreeNode
         root.removeAllChildren()
         
         if (isSqlFragmentMode && originalTopCallersWithStatements != null) {
@@ -371,8 +399,16 @@ class TopCallersTreeTableDialog private constructor(
         // 通知模型更新
         treeModel.reload()
         
-        // 展开所有节点
-        expandAllNodes()
+        // 恢复之前展开的节点
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i) as DefaultMutableTreeNode
+            val nodeData = child.userObject as? TreeNodeData.TopCallerData
+            if (nodeData != null && child.childCount > 0 && 
+                expandedMethods.contains(nodeData.methodInfo.qualifiedName)) {
+                val path = javax.swing.tree.TreePath(arrayOf(root, child))
+                tree.expandPath(path)
+            }
+        }
     }
     
     /**
@@ -547,18 +583,14 @@ class TopCallersTreeTableDialog private constructor(
     
     /**
      * 创建列定义
+     * 注意：第一列必须使用 TreeColumnInfo 类型才能显示展开/折叠控件
      */
     private fun createColumns(): Array<ColumnInfo<*, *>> {
         val columns = mutableListOf<ColumnInfo<*, *>>()
         
-        columns.add(object : ColumnInfo<Any?, String>("Seq") {
-            override fun valueOf(item: Any?): String {
-                return when (val data = (item as? DefaultMutableTreeNode)?.userObject) {
-                    is TreeNodeData.TopCallerData -> data.seqNumber.toString()
-                    else -> ""
-                }
-            }
-        })
+        // 第一列使用 TreeColumnInfo，显示序号并支持展开/折叠
+        // TreeColumnInfo 会使用节点的 toString() 方法显示内容
+        columns.add(TreeColumnInfo("Seq"))
         
         columns.add(object : ColumnInfo<Any?, String>("Type") {
             override fun valueOf(item: Any?): String {
@@ -740,9 +772,72 @@ class TopCallersTreeTableDialog private constructor(
      */
     private fun expandAllNodes() {
         val tree = treeTable.tree
-        for (i in 0 until tree.rowCount) {
+        var i = 0
+        while (i < tree.rowCount) {
             tree.expandRow(i)
+            i++
         }
+    }
+    
+    /**
+     * 折叠所有节点
+     */
+    private fun collapseAllNodes() {
+        val tree = treeTable.tree
+        // 从后往前折叠，避免索引变化问题
+        for (i in tree.rowCount - 1 downTo 0) {
+            tree.collapseRow(i)
+        }
+    }
+    
+    /**
+     * 检查是否存在可展开的节点（有子节点且当前折叠的节点）
+     */
+    private fun hasCollapsedNodes(): Boolean {
+        val tree = treeTable.tree
+        val root = treeModel.root as DefaultMutableTreeNode
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i) as DefaultMutableTreeNode
+            if (child.childCount > 0) {
+                val path = javax.swing.tree.TreePath(arrayOf(root, child))
+                if (tree.isCollapsed(path)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+    
+    /**
+     * 检查是否存在可折叠的节点（有子节点且当前展开的节点）
+     */
+    private fun hasExpandedNodes(): Boolean {
+        val tree = treeTable.tree
+        val root = treeModel.root as DefaultMutableTreeNode
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i) as DefaultMutableTreeNode
+            if (child.childCount > 0) {
+                val path = javax.swing.tree.TreePath(arrayOf(root, child))
+                if (tree.isExpanded(path)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+    
+    /**
+     * 检查是否存在有子节点的父节点
+     */
+    private fun hasExpandableNodes(): Boolean {
+        val root = treeModel.root as DefaultMutableTreeNode
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i) as DefaultMutableTreeNode
+            if (child.childCount > 0) {
+                return true
+            }
+        }
+        return false
     }
     
     /**
@@ -830,9 +925,10 @@ class TopCallersTreeTableDialog private constructor(
     /**
      * 设置右键菜单
      * 根据用户需求：
-     * 1. StatementID 列有内容：显示 "跳转到XML"、"Copy Expanded Statement"、"复制"
-     * 2. 其他列有内容：显示 "跳转到源码"、"复制"
-     * 3. 无内容的单元格：不显示菜单
+     * 1. 多选模式（选中多个单元格）：只显示"复制"
+     * 2. 单选模式 - StatementID 列有内容：显示 "跳转到XML"、"Copy Expanded Statement"、"复制"
+     * 3. 单选模式 - 其他列有内容：显示 "跳转到源码"、"复制"
+     * 4. 无内容的单元格或空白区域：显示 Expand All/Collapse All（如果存在可展开节点）
      */
     private fun setupContextMenu() {
         // 注册 Ctrl+C / Command+C 快捷键
@@ -841,7 +937,8 @@ class TopCallersTreeTableDialog private constructor(
         treeTable.getInputMap(JComponent.WHEN_FOCUSED).put(copyKeyStroke, "copy")
         treeTable.actionMap.put("copy", object : AbstractAction() {
             override fun actionPerformed(e: ActionEvent?) {
-                copySelectedContent()
+                // 复制选中的单元格（支持多选）
+                copySelectedCells()
             }
         })
 
@@ -851,13 +948,36 @@ class TopCallersTreeTableDialog private constructor(
                     val col = treeTable.columnAtPoint(e.point)
                     val row = treeTable.rowAtPoint(e.point)
                     
-                    if (row < 0 || col < 0) return
+                    // 空白区域点击：显示 Expand All/Collapse All 菜单
+                    if (row < 0 || col < 0) {
+                        showExpandCollapseOnlyMenu(e)
+                        return
+                    }
                     
+                    // 检查是否选中了多个单元格
+                    val isMultiSelect = hasMultipleCellsSelected()
+                    
+                    // 多选模式：只显示"复制"菜单
+                    if (isMultiSelect) {
+                        val popupMenu = JPopupMenu()
+                        val copyItem = JMenuItem("复制")
+                        copyItem.addActionListener { copySelectedCells() }
+                        popupMenu.add(copyItem)
+                        popupMenu.show(e.component, e.x, e.y)
+                        return
+                    }
+                    
+                    // 单选模式逻辑
                     // 获取单元格内容
                     val cellValue = treeTable.getValueAt(row, col)?.toString() ?: ""
-                    if (cellValue.isBlank()) return  // 无内容不显示菜单
+                    if (cellValue.isBlank()) {
+                        // 无内容的单元格：显示 Expand All/Collapse All 菜单
+                        showExpandCollapseOnlyMenu(e)
+                        return
+                    }
                     
                     treeTable.setRowSelectionInterval(row, row)
+                    treeTable.setColumnSelectionInterval(col, col)
                     val treePath = treeTable.tree.getPathForRow(row)
                     if (treePath != null) {
                         treeTable.tree.selectionPath = treePath
@@ -868,12 +988,14 @@ class TopCallersTreeTableDialog private constructor(
                     
                     // 判断是否是 StatementID 列（SQL 片段模式下的最后一列）
                     val isStatementIdColumn = isSqlFragmentMode && col == treeTable.columnCount - 1
+                    // 判断是否是 Method 列（索引 3）
+                    val isMethodColumn = col == 3
                     
                     // 构建菜单
                     val popupMenu = JPopupMenu()
                     
                     if (isStatementIdColumn) {
-                        // StatementID 列：跳转到XML、Copy Expanded Statement、复制
+                        // StatementID 列：跳转到XML、Copy Expanded Statement
                         val navigateToXmlItem = JMenuItem("跳转到XML")
                         navigateToXmlItem.addActionListener {
                             when (nodeData) {
@@ -899,12 +1021,8 @@ class TopCallersTreeTableDialog private constructor(
                             }
                         }
                         popupMenu.add(copyExpandedItem)
-                        
-                        val copyItem = JMenuItem("复制")
-                        copyItem.addActionListener { copySelectedContent() }
-                        popupMenu.add(copyItem)
-                    } else {
-                        // 其他列：跳转到源码、复制
+                    } else if (isMethodColumn) {
+                        // Method 列：跳转到源码
                         val navigateToSourceItem = JMenuItem("跳转到源码")
                         navigateToSourceItem.addActionListener {
                             when (nodeData) {
@@ -913,11 +1031,17 @@ class TopCallersTreeTableDialog private constructor(
                             }
                         }
                         popupMenu.add(navigateToSourceItem)
-                        
-                        val copyItem = JMenuItem("复制")
-                        copyItem.addActionListener { copySelectedContent() }
-                        popupMenu.add(copyItem)
                     }
+                    // 其他列（Seq、Type、Request Path、Class Comment、Method Comment、Package）不显示跳转功能
+                    
+                    // 添加展开全部/折叠全部菜单项（仅在存在可展开/折叠节点时显示）
+                    addExpandCollapseMenuItems(popupMenu)
+                    
+                    // 复制菜单项放在最后
+                    popupMenu.addSeparator()
+                    val copyItem = JMenuItem("复制")
+                    copyItem.addActionListener { copyCellContent(row, col) }
+                    popupMenu.add(copyItem)
                     
                     popupMenu.show(e.component, e.x, e.y)
                 }
@@ -932,26 +1056,43 @@ class TopCallersTreeTableDialog private constructor(
             private fun handlePopup(e: MouseEvent) {
                 if (e.isPopupTrigger) {
                     val path = treeTable.tree.getPathForLocation(e.x, e.y)
-                    if (path == null) return
+                    if (path == null) {
+                        // 空白区域点击：显示 Expand All/Collapse All 菜单
+                        showExpandCollapseOnlyMenu(e)
+                        return
+                    }
+                    
+                    // 检查是否选中了多个单元格
+                    val isMultiSelect = hasMultipleCellsSelected()
+                    
+                    // 多选模式：只显示"复制"菜单
+                    if (isMultiSelect) {
+                        val popupMenu = JPopupMenu()
+                        val copyItem = JMenuItem("复制")
+                        copyItem.addActionListener { copySelectedCells() }
+                        popupMenu.add(copyItem)
+                        popupMenu.show(e.component, e.x, e.y)
+                        return
+                    }
+                    
+                    // 单选模式逻辑
+                    // 获取对应的行号
+                    val row = treeTable.tree.getRowForPath(path)
                     
                     treeTable.tree.selectionPath = path
                     val node = path.lastPathComponent as? DefaultMutableTreeNode
                     val nodeData = node?.userObject ?: return
                     
-                    // 树列点击（第一列），属于非 StatementID 列
+                    // 树列点击（第一列 Seq），不显示跳转功能
                     val popupMenu = JPopupMenu()
                     
-                    val navigateToSourceItem = JMenuItem("跳转到源码")
-                    navigateToSourceItem.addActionListener {
-                        when (nodeData) {
-                            is TreeNodeData.TopCallerData -> navigateToMethod(nodeData.methodInfo)
-                            is TreeNodeData.StatementData -> navigateToMethod(nodeData.parentMethodInfo)
-                        }
-                    }
-                    popupMenu.add(navigateToSourceItem)
+                    // 添加展开全部/折叠全部菜单项（仅在存在可展开/折叠节点时显示）
+                    addExpandCollapseMenuItems(popupMenu)
                     
+                    // 复制菜单项放在最后（树列是第0列）
+                    popupMenu.addSeparator()
                     val copyItem = JMenuItem("复制")
-                    copyItem.addActionListener { copySelectedContent() }
+                    copyItem.addActionListener { copyCellContent(row, 0) }
                     popupMenu.add(copyItem)
                     
                     popupMenu.show(e.component, e.x, e.y)
@@ -961,31 +1102,177 @@ class TopCallersTreeTableDialog private constructor(
             override fun mousePressed(e: MouseEvent) = handlePopup(e)
             override fun mouseReleased(e: MouseEvent) = handlePopup(e)
         })
+        
+        // 在滚动面板上添加监听器，保证在滚动面板空白区域右键时也能触发
+        scrollPane.addMouseListener(object : MouseAdapter() {
+            private fun handlePopup(e: MouseEvent) {
+                if (e.isPopupTrigger) {
+                    showExpandCollapseOnlyMenu(e)
+                }
+            }
+            
+            override fun mousePressed(e: MouseEvent) = handlePopup(e)
+            override fun mouseReleased(e: MouseEvent) = handlePopup(e)
+        })
+        
+        // 在 viewport 上添加监听器
+        scrollPane.viewport.addMouseListener(object : MouseAdapter() {
+            private fun handlePopup(e: MouseEvent) {
+                if (e.isPopupTrigger) {
+                    showExpandCollapseOnlyMenu(e)
+                }
+            }
+            
+            override fun mousePressed(e: MouseEvent) = handlePopup(e)
+            override fun mouseReleased(e: MouseEvent) = handlePopup(e)
+        })
     }
     
     /**
-     * 复制选中内容
+     * 显示仅包含 Expand All/Collapse All 的右键菜单
+     * 用于空白区域或无内容单元格的右键点击
      */
-    private fun copySelectedContent() {
-        val selectedPath = treeTable.tree.selectionPath ?: return
-        val node = selectedPath.lastPathComponent as? DefaultMutableTreeNode ?: return
+    private fun showExpandCollapseOnlyMenu(e: MouseEvent) {
+        // 检查是否存在可展开/折叠的节点
+        if (!hasExpandableNodes()) {
+            return  // 无子节点，不显示菜单
+        }
         
-        val sb = StringBuilder()
-        when (val data = node.userObject) {
-            is TreeNodeData.TopCallerData -> {
-                sb.append("${data.seqNumber}\t${data.type}\t${data.methodInfo.requestPath}\t")
-                sb.append("${data.methodDisplay}\t${data.methodInfo.classComment}\t")
-                sb.append("${data.methodInfo.functionComment}\t${data.methodInfo.packageName}")
-                if (data.statementIds.isNotEmpty()) {
-                    sb.append("\t${data.statementIds.joinToString(", ")}")
+        val hasCollapsed = hasCollapsedNodes()
+        val hasExpanded = hasExpandedNodes()
+        
+        // 如果没有可展开或可折叠的节点，不显示菜单
+        if (!hasCollapsed && !hasExpanded) {
+            return
+        }
+        
+        val popupMenu = JPopupMenu()
+        
+        if (hasCollapsed) {
+            val expandAllItem = JMenuItem("Expand All")
+            expandAllItem.addActionListener {
+                expandAllNodes()
+            }
+            popupMenu.add(expandAllItem)
+        }
+        
+        if (hasExpanded) {
+            val collapseAllItem = JMenuItem("Collapse All")
+            collapseAllItem.addActionListener {
+                collapseAllNodes()
+            }
+            popupMenu.add(collapseAllItem)
+        }
+        
+        popupMenu.show(e.component, e.x, e.y)
+    }
+    
+    /**
+     * 复制指定单元格内容
+     * @param row 行索引
+     * @param col 列索引
+     */
+    private fun copyCellContent(row: Int, col: Int) {
+        if (row < 0 || col < 0) return
+        
+        val cellValue = treeTable.getValueAt(row, col)?.toString() ?: ""
+        if (cellValue.isNotBlank()) {
+            CopyPasteManager.getInstance().setContents(StringSelection(cellValue))
+        }
+    }
+    
+    /**
+     * 检查是否选中了多个单元格
+     * @return 是否有多个单元格被选中
+     */
+    private fun hasMultipleCellsSelected(): Boolean {
+        val selectedRows = treeTable.selectedRows
+        val selectedColumns = treeTable.selectedColumns
+        return selectedRows.size * selectedColumns.size > 1
+    }
+    
+    /**
+     * 复制选中的所有单元格内容
+     * 如果选中了多个单元格，使用制表符分隔列，换行符分隔行（与 Excel 格式兼容）
+     */
+    private fun copySelectedCells() {
+        val selectedRows = treeTable.selectedRows
+        val selectedColumns = treeTable.selectedColumns
+        
+        if (selectedRows.isEmpty() || selectedColumns.isEmpty()) return
+        
+        // 如果只选中了一个单元格，调用单元格复制方法
+        if (selectedRows.size == 1 && selectedColumns.size == 1) {
+            copyCellContent(selectedRows[0], selectedColumns[0])
+            return
+        }
+        
+        // 构建制表符分隔的文本
+        val builder = StringBuilder()
+        
+        // 对行进行排序以确保顺序
+        val sortedRows = selectedRows.sorted()
+        val sortedColumns = selectedColumns.sorted()
+        
+        for ((rowIndex, row) in sortedRows.withIndex()) {
+            for ((colIndex, col) in sortedColumns.withIndex()) {
+                val cellValue = treeTable.getValueAt(row, col)?.toString() ?: ""
+                builder.append(cellValue)
+                
+                // 不是最后一列，添加制表符
+                if (colIndex < sortedColumns.size - 1) {
+                    builder.append("\t")
                 }
             }
-            is TreeNodeData.StatementData -> {
-                sb.append(data.statementId)
+            
+            // 不是最后一行，添加换行符
+            if (rowIndex < sortedRows.size - 1) {
+                builder.append("\n")
             }
         }
         
-        CopyPasteManager.getInstance().setContents(StringSelection(sb.toString()))
+        val content = builder.toString()
+        if (content.isNotBlank()) {
+            CopyPasteManager.getInstance().setContents(StringSelection(content))
+        }
+    }
+    
+    /**
+     * 添加展开全部/折叠全部菜单项
+     * 根据当前状态智能显示：
+     * - 无子节点时：不显示任何菜单项
+     * - 所有节点都已展开：只显示"折叠全部"
+     * - 所有节点都已折叠：只显示"展开全部"
+     * - 混合状态：同时显示两个选项
+     */
+    private fun addExpandCollapseMenuItems(popupMenu: JPopupMenu) {
+        // 检查是否存在可展开/折叠的节点
+        if (!hasExpandableNodes()) {
+            return  // 无子节点，不显示菜单项
+        }
+        
+        val hasCollapsed = hasCollapsedNodes()
+        val hasExpanded = hasExpandedNodes()
+        
+        // 添加分隔线
+        popupMenu.addSeparator()
+        
+        // 根据状态显示相应菜单项
+        if (hasCollapsed) {
+            val expandAllItem = JMenuItem("Expand All")
+            expandAllItem.addActionListener {
+                expandAllNodes()
+            }
+            popupMenu.add(expandAllItem)
+        }
+        
+        if (hasExpanded) {
+            val collapseAllItem = JMenuItem("Collapse All")
+            collapseAllItem.addActionListener {
+                collapseAllNodes()
+            }
+            popupMenu.add(collapseAllItem)
+        }
     }
 
     override fun createNorthPanel(): JComponent? {
