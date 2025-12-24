@@ -1,5 +1,23 @@
 # Kiwi Changelog
 
+## [0.0.90]
+### Fixed
+- 修复插件安装后首次触发 "Get Top Callers Information" 时的 IndexNotReadyException 异常
+  - 问题发生在 IDE 索引未完成时访问 JavaPsiFacade.findClass
+  - 使用 DumbService.runReadActionInSmartMode 替代普通 runReadAction
+  - 确保在 Smart Mode（索引就绪）后执行需要索引支持的操作
+
+## [0.0.89]
+### Fixed
+- 修复 SQL 片段 Top Callers 功能中部分 Mapper 文件无法跳转和复制的问题
+  - 问题现象：UserMapper.xml 功能正常，但 TaskMapper.xml 报错"未找到 Mapper XML 文件"或"未找到 Statement"
+  - 根本原因：MapperIndexService 缓存逻辑缺陷，当缓存非空但未命中时不会重新扫描
+  - 修复方案：
+    - 当缓存未命中时强制重新扫描索引，确保新增或之前遗漏的 Mapper 文件能被正确索引
+    - 使用 VirtualFile 替代 XmlFile 作为缓存值，避免 PsiFile 失效导致的问题
+    - 使用 GlobalSearchScope.allScope(project) 替代 projectScope，确保包含项目中的所有模块
+    - 新增 VirtualFile 有效性检查，失效时自动从缓存移除并重新获取
+
 ## [0.0.88]
 ### Fixed
 - 修复 "Get Top Callers Information" 功能的 IndexNotReadyException 异常

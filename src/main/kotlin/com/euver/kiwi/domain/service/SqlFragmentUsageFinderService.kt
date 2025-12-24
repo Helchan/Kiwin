@@ -4,6 +4,7 @@ import com.euver.kiwi.parser.MyBatisXmlParser
 import com.euver.kiwi.service.MapperIndexService
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiMethod
@@ -254,12 +255,13 @@ class SqlFragmentUsageFinderService(private val project: Project) {
 
     /**
      * 查找 Mapper 接口中对应的方法
+     * 使用 runReadActionInSmartMode 确保在索引就绪后执行，避免 IndexNotReadyException
      */
     private fun findMapperMethod(namespace: String, methodName: String): PsiMethod? {
-        return ApplicationManager.getApplication().runReadAction<PsiMethod?> {
+        return DumbService.getInstance(project).runReadActionInSmartMode<PsiMethod?> {
             val psiFacade = JavaPsiFacade.getInstance(project)
             val scope = GlobalSearchScope.projectScope(project)
-            val mapperClass = psiFacade.findClass(namespace, scope) ?: return@runReadAction null
+            val mapperClass = psiFacade.findClass(namespace, scope) ?: return@runReadActionInSmartMode null
             mapperClass.findMethodsByName(methodName, false).firstOrNull()
         }
     }
