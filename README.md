@@ -1,16 +1,16 @@
-# Kiwi
+# Kiwin
 
-![Build](https://github.com/euver/Kiwi/workflows/Build/badge.svg)
+![Build](https://github.com/euver/Kiwin/workflows/Build/badge.svg)
 [![Version](https://img.shields.io/jetbrains/plugin/v/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
 [![Downloads](https://img.shields.io/jetbrains/plugin/d/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
 
 <!-- Plugin description -->
-Kiwi 是一款专为 Spring 项目开发设计的 IntelliJ IDEA 插件，旨在提升开发者对 Spring 项目源码的分析和开发效率。该插件提供了一系列实用工具，帮助开发者快速理解和处理项目中的复杂代码结构。
+Kiwin 是一款专为 Spring 项目开发设计的 IntelliJ IDEA 插件，旨在提升开发者对 Spring 项目源码的分析和开发效率。该插件提供了一系列实用工具，帮助开发者快速理解和处理项目中的复杂代码结构。
 <!-- Plugin description end -->
 
 ## 插件信息
 
-- **当前版本**: 0.0.100
+- **当前版本**: 0.1.1
 - **支持 IDE**: IntelliJ IDEA 2023.1+
 - **开发语言**: Kotlin 2.2.21
 - **JDK 版本**: 21
@@ -102,19 +102,19 @@ Kiwi 是一款专为 Spring 项目开发设计的 IntelliJ IDEA 插件，旨在�
 
 1. 打开 MyBatis Mapper XML 文件
 2. 将光标定位在 `<select>`、`<insert>`、`<update>` 或 `<delete>` 标签内
-3. 右键点击，选择 **"Kiwi" → "Copy Expanded Statement"**
+3. 右键点击，选择 **"Kiwin" → "Copy Expanded Statement"**
 
 **方式二：在 Java 文件中触发**
 
 1. 打开 Mapper 接口的 Java 文件
 2. 将光标定位在接口方法上
-3. 右键点击，选择 **"Kiwi" → "Copy Expanded Statement"**
+3. 右键点击，选择 **"Kiwin" → "Copy Expanded Statement"**
 
 ### Extract Method Information
 
 1. 打开任意 Java 文件
 2. 将光标定位在方法内部或方法签名上
-3. 右键点击，选择 **"Kiwi" → "Extract Method Information"**
+3. 右键点击，选择 **"Kiwin" → "Extract Method Information"**
 
 ### Get Top Callers Information
 
@@ -122,26 +122,26 @@ Kiwi 是一款专为 Spring 项目开发设计的 IntelliJ IDEA 插件，旨在�
 
 1. 打开任意 Java 文件
 2. 将光标定位在方法定义上，或定位在方法调用表达式上
-3. 右键点击，选择 **"Kiwi" → "Get Top Callers Information"**
+3. 右键点击，选择 **"Kiwin" → "Get Top Callers Information"**
 
 **方式二：在 MyBatis XML 文件中触发（Statement）**
 
 1. 打开 MyBatis Mapper XML 文件
 2. 将光标定位在 `<select>`、`<insert>`、`<update>` 或 `<delete>` 标签内
-3. 右键点击，选择 **"Kiwi" → "Get Top Callers Information"**
+3. 右键点击，选择 **"Kiwin" → "Get Top Callers Information"**
 
 **方式三：在 SQL 片段上触发**
 
 1. 打开 MyBatis Mapper XML 文件
 2. 将光标定位在 `<sql>` 标签内，或 `<include>` 标签的 refid 属性值上
-3. 右键点击，选择 **"Kiwi" → "Get Top Callers Information"**
+3. 右键点击，选择 **"Kiwin" → "Get Top Callers Information"**
 4. 系统会自动查找所有引用该 SQL 片段的 Statement，并分析这些 Statement 的顶层调用者
 
 ### 输出结果
 
 执行后，结果会输出到以下位置：
 
-- **Kiwi Console** - 在 IDE 底部控制台窗口显示详细信息
+- **Kiwin Console** - 在 IDE 底部控制台窗口显示详细信息
 - **TreeTable 弹窗** - 以层级结构展示顶层调用者信息（Get Top Callers Information 功能）
 - **通知消息** - 右下角显示操作结果提示
 
@@ -160,12 +160,12 @@ Kiwi 是一款专为 Spring 项目开发设计的 IntelliJ IDEA 插件，旨在�
 
 1. 打开 IntelliJ IDEA
 2. 进入 `Settings/Preferences` → `Plugins` → `Marketplace`
-3. 搜索 **"Kiwi"**
+3. 搜索 **"Kiwin"**
 4. 点击 `Install` 安装
 
 ### 从本地文件安装
 
-1. 下载 [最新版本](https://github.com/euver/Kiwi/releases/latest)
+1. 下载 [最新版本](https://github.com/euver/Kiwin/releases/latest)
 2. 进入 `Settings/Preferences` → `Plugins` → ⚙️ → `Install Plugin from Disk...`
 3. 选择下载的 zip 文件
 4. 重启 IDE
@@ -187,13 +187,13 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
 ./gradlew clean buildPlugin
 ```
 
-构建产物位于：`build/distributions/Kiwi-0.0.100.zip`
+构建产物位于：`build/distributions/Kiwin-0.1.1.zip`
 
 ## 项目结构
 
 ```
-Kiwi/
-├── src/main/kotlin/com/euver/kiwi/
+Kiwin/
+├── src/main/kotlin/com/euver/kiwin/
 │   ├── action/                              # 表示层 - 用户交互
 │   │   ├── AssembleSqlAction.kt             # MyBatis SQL 组装 Action
 │   │   ├── ExtractMethodInfoAction.kt       # 提取方法信息 Action
@@ -233,20 +233,20 @@ Kiwi/
 ├── build.gradle.kts                         # Gradle 构建配置
 ├── gradle.properties                        # Gradle 属性配置
 ├── CHANGELOG.md                             # 版本变更日志
-├── Kiwi产品说明书.md                      # 详细产品文档
+├── Kiwin产品说明书.md                      # 详细产品文档
 └── README.md                                # 项目说明文档
 ```
 
 ## 技术架构
 
-Kiwi 采用 **DDD（领域驱动设计）分层架构**，各层职责清晰：
+Kiwin 采用 **DDD（领域驱动设计）分层架构**，各层职责清晰：
 
 - **表示层 (Presentation)**: 处理用户交互，触发应用服务
 - **应用层 (Application)**: 编排用例流程，协调领域服务
 - **领域层 (Domain)**: 核心业务逻辑，可复用的展开能力
 - **基础设施层 (Infrastructure)**: 技术实现，文件解析、索引等
 
-详细架构说明请查看 [Kiwi产品说明书.md](./Kiwi产品说明书.md)。
+详细架构说明请查看 [Kiwin产品说明书.md](./Kiwin产品说明书.md)。
 
 ## 依赖项
 
@@ -284,7 +284,7 @@ Kiwi 采用 **DDD（领域驱动设计）分层架构**，各层职责清晰：
 
 ## 版本历史
 
-### v0.0.100 (当前版本)
+### v0.1.1 (当前版本)
 - Get Top Callers Information 功能与 IDEA 原生 CallerMethodsTreeStructure 完全对齐
 - 新增 Javadoc 引用过滤和类型关联性检查
 - 增强异常处理，优化用户体验
@@ -293,7 +293,7 @@ Kiwi 采用 **DDD（领域驱动设计）分层架构**，各层职责清晰：
 
 ## 反馈与贡献
 
-如有问题或建议，欢迎提交 [Issue](https://github.com/euver/Kiwi/issues) 或 Pull Request。
+如有问题或建议，欢迎提交 [Issue](https://github.com/euver/Kiwin/issues) 或 Pull Request。
 
 ## 许可证
 

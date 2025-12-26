@@ -1,7 +1,7 @@
 <!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
-    <id>com.euver.kiwi</id>
-    <name>Kiwi</name>
+    <id>com.euver.kiwin</id>
+    <name>Kiwin</name>
     <vendor>Helchan</vendor>
 
     <depends>com.intellij.modules.platform</depends>
@@ -10,34 +10,34 @@
 
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.euver.kiwi.service.MyBatisSqlToolWindowFactory" id="Kiwi Console" anchor="bottom" canCloseContents="true" icon="AllIcons.Debugger.Console"/>
+        <toolWindow factoryClass="com.euver.kiwin.service.MyBatisSqlToolWindowFactory" id="Kiwin Console" anchor="bottom" canCloseContents="true" icon="AllIcons.Debugger.Console"/>
         <!-- MyBatis SQL Assembly Service -->
-        <projectService serviceImplementation="com.euver.kiwi.service.MapperIndexService"/>
+        <projectService serviceImplementation="com.euver.kiwin.service.MapperIndexService"/>
         <!-- Notification Group for MyBatis SQL Assembly -->
         <notificationGroup id="MyBatis.SQL.Assembly" displayType="BALLOON"/>
     </extensions>
 
     <actions>
         <!-- MyBatis SQL Assembly Action -->
-        <group id="Kiwi.EditorPopupGroup"
-               text="Kiwi"
+        <group id="Kiwin.EditorPopupGroup"
+               text="Kiwin"
                popup="true">
             <add-to-group group-id="EditorPopupMenu" anchor="first"/>
-            <action id="Kiwi.ExtractMethodInfo"
-                    class="com.euver.kiwi.action.ExtractMethodInfoAction"
+            <action id="Kiwin.ExtractMethodInfo"
+                    class="com.euver.kiwin.action.ExtractMethodInfoAction"
                     text="Extract Method Information"
                     description="提取方法的全限定名、功能注释和请求路径并输出到控制台"
-                    icon="/icons/kiwi.svg"/>
-            <action id="MyBatis.AssembleSql"
-                    class="com.euver.kiwi.action.AssembleSqlAction"
+                    icon="/icons/kiwin.svg"/>
+            <action id="Kiwin.AssembleSql"
+                    class="com.euver.kiwin.action.AssembleSqlAction"
                     text="Copy Expanded Statement"
                     description="Copy the statement with all include tags expanded"
-                    icon="/icons/kiwi.svg"/>
-            <action id="Kiwi.FindTopCaller"
-                    class="com.euver.kiwi.action.FindTopCallerAction"
+                    icon="/icons/kiwin.svg"/>
+            <action id="Kiwin.FindTopCaller"
+                    class="com.euver.kiwin.action.FindTopCallerAction"
                     text="Get Top Callers Information"
                     description="获取并输出所有顶层调用者的方法信息"
-                    icon="/icons/kiwi.svg"/>
+                    icon="/icons/kiwin.svg"/>
         </group>
     </actions>
 </idea-plugin>

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.2
+- Get Top Callers Information 功能新增匿名内部类调用链追溯支持：
+  - 新增匿名内部类检测逻辑：当方法在匿名类中时，自动向上追溯到包含该匿名类定义的外部方法
+  - 新增 getEnclosingMethodOfAnonymousClass() 方法，与 IDEA 原生 Hierarchy 行为完全一致
+  - 修复 Future/Callable 场景下显示为 ".UnknownClass.call" 的问题
+  - 优化匿名类方法信息显示：格式为 "Anonymous in methodName() in ClassName"
+  - 更新 MethodInfoExtractorService 支持匿名类的包名、类名、全限定名提取
+  - 支持的调用链场景新增：匿名内部类调用（追踪到包含匿名类定义的外部方法）
+
+## 0.1.1
+- 插件名称从 "Kiwi" 全面更名为 "Kiwin"
+  - 更新插件显示名称和 ID
+  - 更新所有包名（com.euver.kiwi → com.euver.kiwin）
+  - 更新右键菜单组名称
+  - 更新控制台窗口名称（Kiwi Console → Kiwin Console）
+  - 更新图标文件（kiwi.svg → kiwin.svg）
+  - 更新所有文档和配置文件中的引用
+
 ## 0.1.0
 - 版本号调整至 0.1.0
 
@@ -47,7 +65,7 @@
 - Get Top Callers 表格右键菜单文本国际化："跳转到源码" → "Go to Source"，"跳转到XML" → "Go to XML"，"复制" → "Copy"
 
 ## 0.0.94
-- 调整右键菜单 Kiwi 目录内菜单项顺序，将 "Extract Method Information" 置于第一位
+- 调整右键菜单 Kiwin 目录内菜单项顺序，将 "Extract Method Information" 置于第一位
 
 ## 0.0.93
 - 弹出面板标签“源位置”改为英文 "Source"
