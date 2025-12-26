@@ -178,17 +178,17 @@ class TopCallerFinderService(private val project: Project) {
             }
             visited.add(methodKey)
             
-            // 与 IDEA 原生 Hierarchy 一致：检查方法是否在匿名类中
-            // 如果是匿名类，向上追溯到包含该匿名类定义的外部方法
-            val enclosingMethodOfAnonymous = getEnclosingMethodOfAnonymousClass(method)
+            // 与 IDEA 原生 Hierarchy 一致：检查方法是否在匿名类或未知类中
+            // 如果是匿名类或 qualifiedName 为 null，向上追溯到包含该类定义的外部方法
+            val enclosingMethodOfAnonymous = getEnclosingMethodOfAnonymousOrUnknownClass(method)
             if (enclosingMethodOfAnonymous != null) {
-                logger.debug("检测到匿名类中的方法: $methodKey，追溯到外部方法")
+                logger.debug("检测到匿名类/未知类中的方法: $methodKey，追溯到外部方法")
                 queue.add(enclosingMethodOfAnonymous to depth + 1)
                 continue
             }
             
-            // 检查是否是函数式接口方法
-            if (isFunctionalInterfaceMethodInternal(methodKey)) {
+            // 检查是否是函数式接口方法（使用 findDeepestSuperMethods 检查实际父方法）
+            if (isFunctionalInterfaceMethodInternal(method)) {
                 logger.debug("检测到函数式接口方法: $methodKey，尝试通过Lambda/方法引用追溯实际调用者")
                 val lambdaCallers = findLambdaDeclarationCallersInternal(method)
                 if (lambdaCallers.isNotEmpty()) {
@@ -205,7 +205,7 @@ class TopCallerFinderService(private val project: Project) {
             
             if (callers.isEmpty()) {
                 // 没有调用者，是顶层调用者
-                if (!isFunctionalInterfaceMethodInternal(methodKey)) {
+                if (!isFunctionalInterfaceMethodInternal(method)) {
                     topCallers.add(method)
                     logger.debug("找到顶层调用者: $methodKey")
                 }
@@ -220,12 +220,33 @@ class TopCallerFinderService(private val project: Project) {
 
     /**
      * 函数式接口方法检查（内部方法，在 ReadAction 上下文中调用）
+     * 使用 findDeepestSuperMethods 检查方法是否实现了某个已知的函数式接口方法
      */
-    private fun isFunctionalInterfaceMethodInternal(methodKey: String): Boolean {
-        val className = methodKey.substringAfter(" ").substringBefore(".")
-        val methodName = methodKey.substringAfter(".").substringBefore("(")
-        val fullName = "$className.$methodName"
-        return fullName in FUNCTIONAL_INTERFACE_METHODS
+    private fun isFunctionalInterfaceMethodInternal(method: PsiMethod): Boolean {
+        // 首先检查当前方法的类名
+        val containingClass = method.containingClass
+        if (containingClass != null) {
+            val qualifiedName = containingClass.qualifiedName
+            if (qualifiedName != null) {
+                val fullName = "$qualifiedName.${method.name}"
+                if (fullName in FUNCTIONAL_INTERFACE_METHODS) {
+                    return true
+                }
+            }
+        }
+        
+        // 使用 findDeepestSuperMethods 检查父方法是否属于函数式接口
+        val deepestSuperMethods = method.findDeepestSuperMethods()
+        for (superMethod in deepestSuperMethods) {
+            val superClass = superMethod.containingClass ?: continue
+            val superQualifiedName = superClass.qualifiedName ?: continue
+            val fullName = "$superQualifiedName.${superMethod.name}"
+            if (fullName in FUNCTIONAL_INTERFACE_METHODS) {
+                return true
+            }
+        }
+        
+        return false
     }
     
     /**
@@ -443,43 +464,36 @@ class TopCallerFinderService(private val project: Project) {
     }
     
     /**
-     * 获取匿名类中方法的外部包含方法（与 IDEA 原生 Hierarchy 一致）
+     * 获取匿名类或未知类中方法的外部包含方法（与 IDEA 原生 Hierarchy 一致）
      * 
-     * 当方法定义在匿名类中时（如 new Callable<T>() { public T call() {...} }），
-     * 返回包含该匿名类定义的外部方法，以便继续向上追溯调用链。
+     * 当方法定义在匿名类或其 qualifiedName 为 null 的类中时，
+     * 返回包含该类定义的外部方法，以便继续向上追溯调用链。
      * 
-     * 例如：
-     * ```java
-     * // 在 PriceApplicationDomainService 中
-     * private Future<Result> findSubApplicationFuture() {
-     *     return executor.submit(new Callable<Result>() {
-     *         @Override
-     *         public Result call() {  // <- 当前方法
-     *             return myApplicationDomainService.findApplicationInfo(entity);
-     *         }
-     *     });
-     * }
-     * ```
-     * 对于上述 call() 方法，此函数返回 findSubApplicationFuture() 方法。
+     * 这涵盖以下场景：
+     * 1. 匿名内部类：new Callable<T>() { public T call() {...} }
+     * 2. Lambda 表达式生成的内部类
+     * 3. 其他 qualifiedName 为 null 的特殊情况
      * 
      * @param method 待检查的方法
-     * @return 如果方法在匿名类中，返回包含该匿名类的外部方法；否则返回 null
+     * @return 如果方法在匿名类/未知类中，返回包含该类的外部方法；否则返回 null
      */
-    private fun getEnclosingMethodOfAnonymousClass(method: PsiMethod): PsiMethod? {
+    private fun getEnclosingMethodOfAnonymousOrUnknownClass(method: PsiMethod): PsiMethod? {
         val containingClass = method.containingClass ?: return null
         
-        // 检查是否是匿名类
-        if (containingClass !is PsiAnonymousClass) {
+        // 检查是否是匿名类或 qualifiedName 为 null
+        val isAnonymousOrUnknown = containingClass is PsiAnonymousClass || containingClass.qualifiedName == null
+        
+        if (!isAnonymousOrUnknown) {
             return null
         }
         
-        // 从匿名类向上查找包含它的外部方法
-        // PsiTreeUtil.getParentOfType 会跨越匿名类边界向上查找
+        // 从该类向上查找包含它的外部方法
+        // PsiTreeUtil.getParentOfType 会跨越类边界向上查找
         val enclosingMethod = PsiTreeUtil.getParentOfType(containingClass, PsiMethod::class.java)
         
         if (enclosingMethod != null) {
             val enclosingKey = getMethodKeyInternal(enclosingMethod)
-            logger.debug("匿名类外部方法: $enclosingKey")
+            logger.debug("匿名类/未知类外部方法: $enclosingKey")
         }
         
         return enclosingMethod

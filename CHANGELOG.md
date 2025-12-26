@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3
+- Get Top Callers Information 功能进一步增强匿名类/未知类处理：
+  - 扩展匿名类检测范围：不仅检查 PsiAnonymousClass，还检查 qualifiedName 为 null 的情况
+  - 方法重命名：getEnclosingMethodOfAnonymousClass → getEnclosingMethodOfAnonymousOrUnknownClass
+  - 优化函数式接口方法检测：使用 findDeepestSuperMethods() 检查实际父方法
+  - 修复 Consumer.accept 等场景下显示为 ".UnknownClass.accept" 的问题
+  - 支持消息处理框架（如 IMessageProcessor）中的调用链追溯
+
 ## 0.1.2
 - Get Top Callers Information 功能新增匿名内部类调用链追溯支持：
   - 新增匿名内部类检测逻辑：当方法在匿名类中时，自动向上追溯到包含该匿名类定义的外部方法
