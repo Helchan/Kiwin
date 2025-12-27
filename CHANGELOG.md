@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0]
+### Fixed
+- 修复插件描述不符合 JetBrains Marketplace 上传要求的问题：
+  - 将 README.md 中的中文描述改为英文描述
+  - 确保描述以拉丁字符开头且超过 40 个字符
+  - 解决 "Invalid plugin descriptor 'description'" 错误
+
 ## [0.1.9]
 ### Added
 - Extract Method Information 功能新增剪贴板复制功能：

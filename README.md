@@ -5,12 +5,12 @@
 [![Downloads](https://img.shields.io/jetbrains/plugin/d/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
 
 <!-- Plugin description -->
-Kiwin 是一款专为 Spring 项目开发设计的 IntelliJ IDEA 插件，旨在提升开发者对 Spring 项目源码的分析和开发效率。该插件提供了一系列实用工具，帮助开发者快速理解和处理项目中的复杂代码结构。
+Kiwin is a powerful IntelliJ IDEA plugin designed for Spring and MyBatis project development. It provides essential tools for analyzing and enhancing development efficiency, helping developers quickly understand and handle complex code structures in their projects.
 <!-- Plugin description end -->
 
 ## 插件信息
 
-- **当前版本**: 0.1.1
+- **当前版本**: 0.2.0
 - **支持 IDE**: IntelliJ IDEA 2023.1+
 - **开发语言**: Kotlin 2.2.21
 - **JDK 版本**: 21
@@ -187,7 +187,7 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
 ./gradlew clean buildPlugin
 ```
 
-构建产物位于：`build/distributions/Kiwin-0.1.1.zip`
+构建产物位于：`build/distributions/Kiwin-0.2.0.zip`
 
 ## 项目结构
 
@@ -206,12 +206,15 @@ Kiwin/
 │   │   │   ├── MethodInfo.kt                # 方法信息模型
 │   │   │   └── TopCallerWithStatement.kt    # 顶层调用者与 Statement 关联
 │   │   └── service/
+│   │       ├── ExcelExporter.kt             # Excel 导出接口
 │   │       ├── MethodInfoExtractorService.kt # 方法信息提取服务
 │   │       ├── SqlFragmentResolver.kt       # 片段解析器接口
 │   │       ├── SqlFragmentUsageFinderService.kt # SQL 片段使用查找服务
 │   │       ├── StatementExpanderService.kt  # 核心展开服务
 │   │       └── TopCallerFinderService.kt    # 顶层调用者查找服务
 │   ├── infrastructure/                      # 基础设施层
+│   │   ├── excel/
+│   │   │   └── FastExcelExporter.kt         # FastExcel 导出实现
 │   │   └── resolver/
 │   │       └── SqlFragmentResolverImpl.kt   # 片段解析器实现
 │   ├── model/                               # 共享数据模型
@@ -283,9 +286,9 @@ Kiwin 采用 **DDD（领域驱动设计）分层架构**，各层职责清晰：
 
 ## 版本历史
 
-### v0.1.7 (当前版本)
-- 添加 plugin.xml description 标签，满足 JetBrains 插件市场上传要求
-- Excel 导出库从 Apache POI 替换为 FastExcel，插件体积从 16MB 降至约 400KB
+### v0.2.0 (当前版本)
+- 修复插件描述不符合 JetBrains Marketplace 上传要求的问题
+- 将插件描述改为英文，确保以拉丁字符开头且超过 40 个字符
 
 更多版本信息请查看 [CHANGELOG.md](./CHANGELOG.md)。
 
