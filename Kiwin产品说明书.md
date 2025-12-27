@@ -9,7 +9,7 @@ Kiwin 是一款专为 Spring 项目开发设计的 IntelliJ IDEA 插件，旨在
 | 属性 | 值 |
 |------|-----|
 | 插件名称 | Kiwin |
-| 当前版本 | 0.1.1 |
+| 当前版本 | 0.1.7 |
 | 插件 ID | com.euver.kiwin |
 | 开发者 | Helchan |
 | 支持 IDE 版本 | IntelliJ IDEA 2023.1+ |
@@ -510,12 +510,15 @@ src/main/kotlin/com/euver/kiwin/
 │   │   ├── MethodInfo.kt                # 方法信息模型
 │   │   └── TopCallerWithStatement.kt    # 顶层调用者与 Statement 关联模型 ⭐
 │   └── service/
+│       ├── ExcelExporter.kt             # Excel 导出器接口（依赖倒置）⭐
 │       ├── MethodInfoExtractorService.kt # 方法信息提取服务
 │       ├── SqlFragmentResolver.kt       # 片段解析器接口（依赖倒置）
 │       ├── SqlFragmentUsageFinderService.kt # SQL 片段使用查找服务 ⭐
 │       ├── StatementExpanderService.kt  # 核心展开服务（可复用）
 │       └── TopCallerFinderService.kt    # 顶层调用者查找服务
 ├── infrastructure/                      # 基础设施层 - 技术实现
+│   ├── excel/
+│   │   └── FastExcelExporter.kt         # Excel 导出器实现（使用 FastExcel）
 │   └── resolver/
 │       └── SqlFragmentResolverImpl.kt   # 片段解析器实现
 ├── model/                               # 共享数据模型
@@ -604,6 +607,23 @@ src/main/kotlin/com/euver/kiwin/
   - `findAllCallersBatched(method)`: 批量查找方法的所有调用者
   - `findLambdaDeclarationCallers(method)`: 查找 Lambda/方法引用的声明位置
   - `getProductionScope()`: 获取缓存的生产代码搜索范围
+
+#### FastExcelExporter（基础设施层实现）⭐
+- **职责**：Excel 导出器的具体实现
+- **设计**：使用轻量级 FastExcel 库（仅约 400KB）
+- **功能**：
+  - 导出数据到 Excel 文件
+  - 支持单元格合并
+  - 支持表头样式设置
+  - 自动调整列宽
+
+#### ExcelExporter（领域层接口）⭐
+- **职责**：定义 Excel 导出能力
+- **设计**：依赖倒置原则，由基础设施层实现
+- **数据模型**：
+  - `ExcelExportData`：导出数据封装
+  - `MergeRegion`：合并区域定义
+  - `HeaderStyle`：表头样式配置
 
 #### ExpandStatementUseCase（应用层用例）
 - **职责**：编排展开 Statement 的完整流程
@@ -919,7 +939,50 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
 
 ## 版本历史
 
-### v0.0.100（当前版本）
+### v0.1.7（当前版本）
+- 添加 plugin.xml 中的 description 标签，满足 JetBrains 插件市场上传要求
+- 描述以拉丁字符开头，超过 40 个字符
+- 包含插件三大核心功能介绍
+- 包含技术亮点说明（DDD 架构、BFS 算法、Lambda 追溯等）
+
+### v0.1.6
+- 将 Excel 导出库从 Apache POI 替换为 FastExcel，插件体积从 16MB 降至约 400KB
+- 重构 Excel 导出功能，采用 DDD 架构：
+  - 新增 `ExcelExporter` 接口（领域层）
+  - 新增 `FastExcelExporter` 实现（基础设施层）
+  - 便于后续切换不同的 Excel 导出实现
+
+### v0.1.5
+- 优化注释提取逻辑：注释中某行包含 @ 则整行不取
+
+### v0.1.4
+- 修复类功能注释和方法功能注释可能包含 @ 标签内容的问题
+- 重构 getFunctionCommentFromDoc() 方法，只提取纯描述部分
+- 新增 removeAtTagContent() 方法，过滤文本中间的 @ 标签内容
+
+### v0.1.3
+- Get Top Callers Information 功能进一步增强匿名类/未知类处理
+- 扩展匿名类检测范围：检查 PsiAnonymousClass 和 qualifiedName 为 null 的情况
+- 优化函数式接口方法检测：使用 findDeepestSuperMethods() 检查实际父方法
+- 修复 Consumer.accept 等场景下显示为 ".UnknownClass.accept" 的问题
+- 支持消息处理框架（如 IMessageProcessor）中的调用链追溯
+
+### v0.1.2
+- Get Top Callers Information 功能新增匿名内部类调用链追溯支持
+- 新增匿名内部类检测逻辑：当方法在匿名类中时，自动向上追溯到包含该匿名类定义的外部方法
+- 新增 getEnclosingMethodOfAnonymousClass() 方法，与 IDEA 原生 Hierarchy 行为完全一致
+- 修复 Future/Callable 场景下显示为 ".UnknownClass.call" 的问题
+- 优化匿名类方法信息显示：格式为 "Anonymous in methodName() in ClassName"
+
+### v0.1.1
+- 插件名称从 "Kiwi" 全面更名为 "Kiwin"
+- 更新插件显示名称和 ID、包名、右键菜单组名称
+- 更新控制台窗口名称（Kiwi Console → Kiwin Console）
+
+### v0.1.0
+- 版本号调整至 0.1.0
+
+### v0.0.100
 - Get Top Callers Information 功能与 IDEA 原生 CallerMethodsTreeStructure 完全对齐：
   - 新增 Javadoc 引用过滤：跳过 Javadoc 中的引用（与原生 Hierarchy PsiUtil.isInsideJavadocComment 一致）
   - 新增类型关联性检查：使用 areClassesRelated/areClassesDirectlyRelated 过滤不相关类的引用
@@ -1039,10 +1102,11 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
 | Kotlin | 2.2.21 |
 | Gradle | 9.2.1 |
 | JDK | 21 |
-| Apache POI（Excel导出） | 5.2.5 |
+| FastExcel（Excel导出） | 0.19.0 |
 | IntelliJ Platform Gradle Plugin | 2.10.5 |
 | Gradle Changelog Plugin | 2.5.0 |
 | Gradle Kover Plugin（代码覆盖率） | 0.9.3 |
+| Gradle Qodana Plugin | 2025.2.2 |
 | JUnit | 4.13.2 |
 
 ---
