@@ -531,7 +531,6 @@ src/main/kotlin/com/euver/kiwin/
     ├── MapperIndexService.kt            # Mapper 索引服务
     ├── ConsoleOutputService.kt          # 控制台输出服务
     ├── NotificationService.kt           # 通知服务
-    ├── SqlAssembler.kt                  # SQL 组装服务（已迁移到领域层）
     ├── TopCallersTableDialog.kt         # 顶层调用者表格弹窗（基础版）
     ├── TopCallersTreeTableDialog.kt     # 顶层调用者 TreeTable 弹窗 ⭐
     └── MyBatisSqlToolWindowFactory.kt   # 控制台窗口工厂

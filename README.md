@@ -225,7 +225,6 @@ Kiwin/
 │       ├── MapperIndexService.kt            # Mapper 索引服务
 │       ├── MyBatisSqlToolWindowFactory.kt   # 控制台窗口工厂
 │       ├── NotificationService.kt           # 通知服务
-│       ├── SqlAssembler.kt                  # SQL 组装服务
 │       ├── TopCallersTableDialog.kt         # 表格弹窗（基础版）
 │       └── TopCallersTreeTableDialog.kt     # TreeTable 弹窗
 ├── src/main/resources/META-INF/
@@ -256,7 +255,7 @@ Kiwin 采用 **DDD（领域驱动设计）分层架构**，各层职责清晰：
 | Kotlin | 2.2.21 |
 | Gradle | 9.2.1 |
 | JDK | 21 |
-| Apache POI | 5.2.5 |
+| FastExcel | 0.19.0 |
 | IntelliJ Platform Gradle Plugin | 2.10.5 |
 | Gradle Changelog Plugin | 2.5.0 |
 | Gradle Kover Plugin | 0.9.3 |
@@ -284,10 +283,9 @@ Kiwin 采用 **DDD（领域驱动设计）分层架构**，各层职责清晰：
 
 ## 版本历史
 
-### v0.1.1 (当前版本)
-- Get Top Callers Information 功能与 IDEA 原生 CallerMethodsTreeStructure 完全对齐
-- 新增 Javadoc 引用过滤和类型关联性检查
-- 增强异常处理，优化用户体验
+### v0.1.7 (当前版本)
+- 添加 plugin.xml description 标签，满足 JetBrains 插件市场上传要求
+- Excel 导出库从 Apache POI 替换为 FastExcel，插件体积从 16MB 降至约 400KB
 
 更多版本信息请查看 [CHANGELOG.md](./CHANGELOG.md)。
 

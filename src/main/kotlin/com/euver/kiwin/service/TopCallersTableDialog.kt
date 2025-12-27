@@ -6,7 +6,6 @@ import com.euver.kiwin.domain.model.TopCallerWithStatement
 import com.euver.kiwin.domain.service.ExcelExportData
 import com.euver.kiwin.domain.service.MergeRegion
 import com.euver.kiwin.infrastructure.excel.FastExcelExporter
-import com.euver.kiwin.parser.MyBatisXmlParser
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.ide.CopyPasteManager

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.8]
+### Removed
+- 移除未使用的导入语句：
+  - ExtractMethodInfoAction.kt: PsiReferenceExpression
+  - TopCallersTableDialog.kt: MyBatisXmlParser
+- 删除未使用的代码文件：
+  - SqlAssembler.kt（功能已迁移至 StatementExpanderService）
+  - mybatis/domain/model/MethodInfo.kt（重复的类定义）
+- 同步更新产品说明书和 README.md 中的项目结构描述
+
 ## [0.1.7]
 ### Added
 - 添加 plugin.xml 中的 description 标签，满足 JetBrains 插件市场上传要求：
