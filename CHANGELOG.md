@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9]
+### Added
+- Extract Method Information 功能新增剪贴板复制功能：
+  - 提取方法信息时自动复制到系统剪贴板
+  - 剪贴板内容与控制台输出完全一致
+  - 兼容不同操作系统（使用 AWT Toolkit 跨平台 API）
+
 ## [0.1.8]
 ### Removed
 - 移除未使用的导入语句：

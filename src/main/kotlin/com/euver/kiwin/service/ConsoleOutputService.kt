@@ -54,11 +54,13 @@ class ConsoleOutputService(private val project: Project) {
     }
 
     /**
-     * 输出方法信息到控制台工具窗口
+     * 输出方法信息到控制台工具窗口，并同时复制到系统剪贴板
      */
     fun outputMethodInfo(methodInfo: MethodInfo) {
         val output = buildMethodInfoOutput(methodInfo)
         showInToolWindow(output, ConsoleViewContentType.NORMAL_OUTPUT, "Method Info")
+        // 同时复制到系统剪贴板
+        copyToClipboard(output)
     }
 
     /**
