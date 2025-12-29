@@ -268,15 +268,19 @@ class TopCallerFinderService(private val project: Project) {
         try {
             val scope = getProductionScope()
             
+            // 记录原始方法的实现类，用于后续过滤父接口方法的调用者
+            val originalImplClass = method.containingClass
+            
             // 1. 查找该方法本身的直接调用者
-            findDirectCallers(method, scope, allCallers, callerMethods)
+            findDirectCallers(method, scope, allCallers, callerMethods, null)
             
             // 2. 查找该方法所实现/重写的最深层父类或接口方法的调用者
             // 使用 findDeepestSuperMethods() 与 IDEA 原生 Hierarchy 保持一致
+            // 传入原始实现类，用于过滤接收者类型不兼容的调用
             val deepestSuperMethods = method.findDeepestSuperMethods().toList()
             for (superMethod in deepestSuperMethods) {
                 ProgressManager.checkCanceled()
-                findDirectCallers(superMethod, scope, allCallers, callerMethods)
+                findDirectCallers(superMethod, scope, allCallers, callerMethods, originalImplClass)
             }
         } catch (e: ProcessCanceledException) {
             throw e // 重新抛出取消异常
@@ -295,12 +299,20 @@ class TopCallerFinderService(private val project: Project) {
      * 查找直接调用者（与 IDEA 原生 CallerMethodsTreeStructure 完全一致）
      * - 过滤 Javadoc 中的引用
      * - 检查类型关联性，排除不相关类的引用
+     * - 当搜索接口方法时，额外检查接收者类型是否与原始实现类兼容
+     * 
+     * @param method 要搜索调用者的方法
+     * @param scope 搜索范围
+     * @param allCallers 已找到的调用者键集合（用于去重）
+     * @param callerMethods 调用者方法列表
+     * @param originalImplClass 原始实现类（当搜索父接口方法时用于过滤），null 表示搜索的是方法本身
      */
     private fun findDirectCallers(
         method: PsiMethod,
         scope: GlobalSearchScope,
         allCallers: MutableSet<String>,
-        callerMethods: MutableList<PsiMethod>
+        callerMethods: MutableList<PsiMethod>,
+        originalImplClass: PsiClass?
     ) {
         ProgressManager.checkCanceled()
         
@@ -318,23 +330,34 @@ class TopCallerFinderService(private val project: Project) {
             }
             
             // 与 IDEA 原生 Hierarchy 一致：检查类型关联性
-            if (expectedQualifierClass != null) {
-                var receiverClass: PsiClass? = null
-                if (reference is PsiQualifiedReference) {
-                    val qualifier = reference.qualifier
-                    if (qualifier is PsiExpression) {
-                        receiverClass = PsiUtil.resolveClassInClassTypeOnly(qualifier.type)
-                    }
+            var receiverClass: PsiClass? = null
+            if (reference is PsiQualifiedReference) {
+                val qualifier = reference.qualifier
+                if (qualifier is PsiExpression) {
+                    receiverClass = PsiUtil.resolveClassInClassTypeOnly(qualifier.type)
                 }
-                if (receiverClass == null) {
-                    val resolved = reference.resolve()
-                    if (resolved is PsiMethod) {
-                        receiverClass = resolved.containingClass
-                    }
+            }
+            if (receiverClass == null) {
+                val resolved = reference.resolve()
+                if (resolved is PsiMethod) {
+                    receiverClass = resolved.containingClass
                 }
-                
+            }
+            
+            if (expectedQualifierClass != null && receiverClass != null) {
                 // 过滤不相关的类引用
-                if (receiverClass != null && !areClassesRelated(expectedQualifierClass, receiverClass)) {
+                if (!areClassesRelated(expectedQualifierClass, receiverClass)) {
+                    continue
+                }
+            }
+            
+            // 当搜索父接口方法时，检查接收者类型是否与原始实现类兼容
+            // 这解决了多个实现类共享同一接口时的误关联问题
+            if (originalImplClass != null && receiverClass != null) {
+                if (!isReceiverCompatibleWithImplClass(receiverClass, originalImplClass)) {
+                    val implName = originalImplClass.qualifiedName ?: originalImplClass.name
+                    val receiverName = receiverClass.qualifiedName ?: receiverClass.name
+                    logger.debug("过滤不兼容的调用: 接收者=$receiverName, 原始实现类=$implName")
                     continue
                 }
             }
@@ -348,6 +371,37 @@ class TopCallerFinderService(private val project: Project) {
                 }
             }
         }
+    }
+    
+    /**
+     * 检查接收者类型是否与原始实现类兼容
+     * 
+     * 用于解决接口多实现类的误关联问题：
+     * 当 A、B、C、D 都实现 IMessageProcessor 接口，且只有 A.process() 被调用时，
+     * B、C、D 的 process() 不应该关联到该调用者
+     * 
+     * 判断规则：
+     * 1. 如果接收者是接口类型：返回 true（保守策略，无法确定具体类型）
+     * 2. 如果接收者是具体类：原始实现类必须是该类或其子类
+     *    - receiverClass=A, implClass=A -> true
+     *    - receiverClass=A, implClass=B -> false（B 不是 A 的子类）
+     *    - receiverClass=BaseClass, implClass=A（A extends BaseClass）-> true
+     * 
+     * @param receiverClass 调用点的接收者类型
+     * @param originalImplClass 原始实现类
+     * @return true 表示接收者可能持有原始实现类的实例
+     */
+    private fun isReceiverCompatibleWithImplClass(receiverClass: PsiClass, originalImplClass: PsiClass): Boolean {
+        // 如果接收者是接口，采用保守策略：返回 true
+        // 因为无法在静态分析中确定接口变量持有的具体类型
+        if (receiverClass.isInterface) {
+            return true
+        }
+        
+        // 如果接收者是具体类，检查原始实现类是否与之兼容
+        // 原始实现类必须是接收者类本身或其子类
+        // 例如：如果调用的是 A.process()，只有 A 或 A 的子类的 process() 才能关联
+        return InheritanceUtil.isInheritorOrSelf(originalImplClass, receiverClass, true)
     }
     
     /**

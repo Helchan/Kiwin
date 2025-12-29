@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1]
+### Fixed
+- 修复接口多实现类的调用层次误关联问题：
+  - 问题现象：当 A、B、C、D 都实现 IMessageProcessor 接口，但只有 A.process() 被调用时，B、C、D 的 process() 也会错误关联到调用者
+  - 修复方案：搜索父接口方法调用者时，增加接收者类型与原始实现类的兼容性检查
+  - 新增 isReceiverCompatibleWithImplClass() 方法，判断调用点的接收者类型是否可能持有原始实现类的实例
+  - 修改 findDirectCallers() 方法，新增 originalImplClass 参数用于过滤不兼容的调用
+  - 保守策略：当接收者是接口类型时保持原有行为（无法静态确定具体类型）
+
 ## [0.2.0]
 ### Fixed
 - 修复插件描述不符合 JetBrains Marketplace 上传要求的问题：
