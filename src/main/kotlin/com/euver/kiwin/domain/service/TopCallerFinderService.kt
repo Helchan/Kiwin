@@ -1,9 +1,10 @@
 package com.euver.kiwin.domain.service
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiAnonymousClass
 import com.intellij.psi.PsiClass
@@ -107,11 +108,11 @@ class TopCallerFinderService(private val project: Project) {
             logger.debug("搜索结果缓存已满，执行清理")
         }
         
-        val dumbService = DumbService.getInstance(project)
+        // 等待 Smart Mode，然后在 ReadAction 中执行 BFS 搜索
+        // 与 IDEA 原生 Hierarchy 实现一致，避免 IndexNotReadyException
+        DumbService.getInstance(project).waitForSmartMode()
         
-        // 将整个 BFS 搜索过程包装在单个 runReadActionInSmartMode 中
-        // 与 IDEA 原生 Hierarchy 实现一致，避免多次调用的开销
-        return dumbService.runReadActionInSmartMode<Set<PsiMethod>> {
+        return ApplicationManager.getApplication().runReadAction<Set<PsiMethod>> {
             val methodFullName = "${method.containingClass?.qualifiedName}.${method.name}"
             logger.info("开始查找方法的顶层调用者: $methodFullName")
             
@@ -319,14 +320,14 @@ class TopCallerFinderService(private val project: Project) {
         val expectedQualifierClass = method.containingClass
         val searchQuery = MethodReferencesSearch.search(method, scope, true)
         
-        for (reference in searchQuery) {
+        searchQuery.forEach { reference ->
             ProgressManager.checkCanceled()
             
             val element = reference.element
             
             // 与 IDEA 原生 Hierarchy 一致：跳过 Javadoc 中的引用
             if (PsiUtil.isInsideJavadocComment(element)) {
-                continue
+                return@forEach
             }
             
             // 与 IDEA 原生 Hierarchy 一致：检查类型关联性
@@ -347,7 +348,7 @@ class TopCallerFinderService(private val project: Project) {
             if (expectedQualifierClass != null && receiverClass != null) {
                 // 过滤不相关的类引用
                 if (!areClassesRelated(expectedQualifierClass, receiverClass)) {
-                    continue
+                    return@forEach
                 }
             }
             
@@ -358,7 +359,7 @@ class TopCallerFinderService(private val project: Project) {
                     val implName = originalImplClass.qualifiedName ?: originalImplClass.name
                     val receiverName = receiverClass.qualifiedName ?: receiverClass.name
                     logger.debug("过滤不兼容的调用: 接收者=$receiverName, 原始实现类=$implName")
-                    continue
+                    return@forEach
                 }
             }
             
@@ -483,12 +484,12 @@ class TopCallerFinderService(private val project: Project) {
         try {
             val searchQuery = FunctionalExpressionSearch.search(containingClass, scope)
             
-            for (expression in searchQuery) {
+            searchQuery.forEach { expression ->
                 ProgressManager.checkCanceled()
                 
                 // 与原生 Hierarchy 一致：跳过 Javadoc 中的表达式
                 if (PsiUtil.isInsideJavadocComment(expression)) {
-                    continue
+                    return@forEach
                 }
                 
                 val enclosingMethod = when (expression) {

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.2]
+### Fixed
+- 修复 IDEA Market 上传时的 API 兼容性警告：
+  - 替换即将移除的 `Query.iterator()` API：
+    - `TopCallerFinderService.findDirectCallers()` 中使用 `forEach` 替代 `for-in` 迭代
+    - `TopCallerFinderService.findLambdaDeclarationCallersInternal()` 中使用 `forEach` 替代 `for-in` 迭代
+  - 替换已弃用的 `DumbService.runReadActionInSmartMode()` API：
+    - `TopCallerFinderService.findTopCallers()` 中使用 `waitForSmartMode()` + `runReadAction()` 替代
+    - `SqlFragmentUsageFinderService` 在入口方法处调用 `waitForSmartMode()`，内部方法复用外层 ReadAction
+  - 确保插件在 IntelliJ IDEA 2025 系列版本中的兼容性
+
 ## [0.2.1]
 ### Fixed
 - 修复接口多实现类的调用层次误关联问题：

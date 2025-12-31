@@ -36,6 +36,9 @@ class SqlFragmentUsageFinderService(private val project: Project) {
     fun findMapperMethodsUsingFragment(fragmentFullId: String, currentFile: XmlFile): Set<PsiMethod> {
         logger.info("开始查找引用 SQL 片段的 Statement: $fragmentFullId")
         
+        // 在入口处等待 Smart Mode，避免在 ReadAction 内部调用
+        DumbService.getInstance(project).waitForSmartMode()
+        
         val mapperMethods = mutableSetOf<PsiMethod>()
         val visitedFragments = mutableSetOf<String>()
         
@@ -55,6 +58,9 @@ class SqlFragmentUsageFinderService(private val project: Project) {
      */
     fun findMapperMethodsWithStatementId(fragmentFullId: String, currentFile: XmlFile): Map<String, PsiMethod> {
         logger.info("开始查找引用 SQL 片段的 Statement 及其 ID: $fragmentFullId")
+        
+        // 在入口处等待 Smart Mode，避免在 ReadAction 内部调用
+        DumbService.getInstance(project).waitForSmartMode()
         
         val statementToMethod = mutableMapOf<String, PsiMethod>()
         val visitedFragments = mutableSetOf<String>()
@@ -255,14 +261,12 @@ class SqlFragmentUsageFinderService(private val project: Project) {
 
     /**
      * 查找 Mapper 接口中对应的方法
-     * 使用 runReadActionInSmartMode 确保在索引就绪后执行，避免 IndexNotReadyException
+     * 注意：此方法在外层 ReadAction 中被调用，不需要再包装 ReadAction
      */
     private fun findMapperMethod(namespace: String, methodName: String): PsiMethod? {
-        return DumbService.getInstance(project).runReadActionInSmartMode<PsiMethod?> {
-            val psiFacade = JavaPsiFacade.getInstance(project)
-            val scope = GlobalSearchScope.projectScope(project)
-            val mapperClass = psiFacade.findClass(namespace, scope) ?: return@runReadActionInSmartMode null
-            mapperClass.findMethodsByName(methodName, false).firstOrNull()
-        }
+        val psiFacade = JavaPsiFacade.getInstance(project)
+        val scope = GlobalSearchScope.projectScope(project)
+        val mapperClass = psiFacade.findClass(namespace, scope) ?: return null
+        return mapperClass.findMethodsByName(methodName, false).firstOrNull()
     }
 }
