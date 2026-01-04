@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.2.5]
+### Changed
+- Copy Expanded Statement 功能弹出面板完全对齐 IDEA 原生样式：
+  - 替换 `Messages.showChooseDialog` 为 `JBPopupFactory.createListPopup` + `BaseListPopupStep`
+  - 弹出面板直接展示所有选项（不是下拉框）
+  - 显示 XML 文件类型图标
+  - 显示格式：`statementId (文件名)` 替代原有的 `namespace.statementId  [文件名]`
+  - 显示候选数量统计：`Choose Implementation of methodName (2 found)`
+  - 支持鼠标悬停高亮和键盘导航
+  - 在编辑器位置就近显示，不再需要点击打开
+  - 异步处理：用户选择后在 `onChosen` 回调中立即执行 SQL 组装
+  - 解决弃用 API 警告：`Messages.showChooseDialog` 已被标记为弃用
+
+## [0.2.4]
+### Added
+- Copy Expanded Statement 功能支持多 Mapper XML 候选时弹出选择框：
+  - 问题场景：同一个 namespace + statementId 在多个 XML 文件中都有定义（如数据库切换场景：.postgresql.xml 和 .opengauss.xml）
+  - 对齐 IDEA 原生行为：模仿 "Go To Implementation" 的多目标选择机制
+  - 0 个候选：提示"未找到 Statement"
+  - 1 个候选：直接使用，保持无感体验
+  - 多个候选：弹出选择对话框，显示 "namespace.statementId  [文件名]"，让用户手动选择使用哪一份
+  - 新增 `findCandidateStatementsWithInheritance()` 方法：枚举所有匹配的 StatementInfo（支持继承链 + 多 XML 文件）
+  - 新增 `handleStatementExecution()` 方法：统一处理 0/1/多候选的执行逻辑
+  - 新增 `showStatementChooser()` 方法：弹出选择对话框，使用 `Messages.showChooseDialog` API
+  - 适用场景：双数据库环境切换、同接口多 Mapper XML 共存
+
+## [0.2.3]
+### Fixed
+- 修复 Copy Expanded Statement 功能在 Mapper 接口继承场景下找不到 Statement 的问题：
+  - 问题现象：当方法定义在父接口（如 BaseMapper），但 XML 的 namespace 是子接口（如 UserMapper）时，插件无法找到对应的 Statement
+  - 根因分析：原先使用 `resolveMethod().containingClass` 获取方法定义所在的类（父接口），而不是调用者变量的实际类型（子接口）
+  - 修复方案：从方法调用表达式的 qualifier 类型获取正确的接口类型，并按继承链顺序（子接口 → 父接口）查找 Statement
+  - 新增 `executeFromMapperMethodWithInheritance()` 方法，支持在继承链中递归查找
+  - 新增 `collectInterfaceChain()` 方法，使用 BFS 算法收集接口继承链
+  - 新增 `hasMapperXmlInHierarchy()` 方法，递归检查接口继承链中是否存在对应的 Mapper XML
+  - 支持场景：单层继承、多层继承、泛型接口继承
+
 ## [0.2.2]
 ### Fixed
 - 修复 IDEA Market 上传时的 API 兼容性警告：
